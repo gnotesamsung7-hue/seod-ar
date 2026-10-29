@@ -1,0 +1,842 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#000305">
+<title>SEOD AR | Safety Enclosure Wizard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Lato:wght@300;400;700;900&display=swap" rel="stylesheet">
+<style>
+:root{
+  --black:#000305; --petrol:#003B5E; --green:#63E079; --pulse:#00CDFF; --lime:#CCFA54;
+  --panel:rgba(4,20,31,.94); --field:#01090F; --line:rgba(243,242,239,.12); --line-mid:rgba(243,242,239,.2);
+  --text:#E8EDEF; --muted:#8FA3AD; --warn:#F5A524; --fail:#E5484D;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+[hidden]{display:none !important}
+html,body{margin:0;height:100%;background:var(--black);color:var(--text);
+  font-family:'Lato','Segoe UI',system-ui,-apple-system,sans-serif;-webkit-font-smoothing:antialiased;overflow:hidden}
+body.ar,body.ar #app{background:transparent}
+button,input,select{font:inherit;color:inherit}
+#app{position:fixed;inset:0;display:flex;flex-direction:column;
+  background:radial-gradient(900px 600px at 50% 35%,rgba(0,59,94,.55),transparent 70%),var(--black)}
+#stage{position:absolute;inset:0;touch-action:none}
+#stage canvas{display:block;width:100%;height:100%}
+#camFeed{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0}
+#stage{z-index:1}
+
+/* top bar */
+.top{position:relative;z-index:5;display:flex;align-items:center;gap:10px;
+  padding:calc(env(safe-area-inset-top,0px) + 10px) 14px 10px;pointer-events:none}
+.top > *{pointer-events:auto}
+.brand{display:flex;flex-direction:column;line-height:1.05;margin-right:auto}
+.brand b{font-size:19px;font-weight:300;letter-spacing:.2px}
+.brand b strong{font-weight:900}
+.brand span{font-size:10.5px;letter-spacing:2.4px;text-transform:uppercase;color:var(--green);font-weight:700;margin-bottom:3px}
+body.ar .brand{display:none}
+.chip{background:rgba(1,7,11,.78);border:1px solid var(--line);border-radius:3px;padding:7px 10px;font-size:12.5px;
+  font-variant-numeric:tabular-nums;white-space:nowrap}
+.btn{background:rgba(1,7,11,.72);border:1px solid var(--line-mid);border-radius:3px;padding:9px 13px;font-size:13.5px;
+  cursor:pointer;white-space:nowrap;letter-spacing:.3px;transition:background .12s,border-color .12s}
+.btn:hover{border-color:rgba(243,242,239,.4)}
+.btn:active{transform:translateY(1px)}
+.btn.primary{background:var(--green);border-color:var(--green);color:#01140A;font-weight:900}
+.btn[aria-pressed=true]{border-color:var(--green);color:var(--green);background:rgba(99,224,121,.12)}
+.btn:focus-visible,.seg button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--pulse);outline-offset:2px}
+.arbtn{font-size:15px;padding:11px 18px}
+
+/* status line in AR */
+.status{position:relative;z-index:5;margin:0 14px;align-self:flex-start;max-width:min(560px,calc(100% - 28px));
+  background:rgba(1,7,11,.82);border:1px solid rgba(99,224,121,.3);border-radius:3px;padding:9px 12px;font-size:13.5px;line-height:1.4}
+.status small{display:block;color:var(--muted);font-size:11.5px;margin-top:2px}
+.artools{position:relative;z-index:5;display:flex;flex-wrap:wrap;gap:6px;padding:8px 14px 0}
+
+/* sheet */
+.sheet{position:absolute;z-index:6;left:0;right:0;bottom:0;background:var(--panel);border-top:1px solid var(--line);
+  border-radius:10px 10px 0 0;display:flex;flex-direction:column;max-height:48vh;
+  padding-bottom:env(safe-area-inset-bottom,0px);transition:max-height .25s ease}
+.sheet.min{max-height:calc(96px + env(safe-area-inset-bottom,0px))}
+.grab{display:flex;justify-content:center;padding:7px 0 2px;cursor:pointer;background:none;border:0;width:100%}
+.grab i{width:42px;height:4px;border-radius:2px;background:var(--line-mid)}
+.tabs{display:flex;gap:2px;padding:0 10px;border-bottom:1px solid var(--line);overflow-x:auto;scrollbar-width:none}
+.tabs button{background:none;border:0;border-bottom:2px solid transparent;padding:9px 12px 8px;font-size:13px;color:var(--muted);cursor:pointer;white-space:nowrap}
+.tabs button[aria-selected=true]{color:#fff;border-bottom-color:var(--green);font-weight:700}
+.body{overflow:auto;padding:12px 16px 16px;scrollbar-width:thin;overscroll-behavior:contain}
+.pane[hidden]{display:none}
+@media (min-width:980px){
+  .sheet{top:0;left:auto;width:380px;max-height:none;border-radius:0;border-top:0;border-left:1px solid var(--line);
+    padding-top:calc(env(safe-area-inset-top,0px) + 64px)}
+  .sheet.min{max-height:none}
+  .grab{display:none}
+  .top{padding-right:394px}
+  .status,.artools{margin-right:380px}
+}
+
+/* fields */
+.row{display:grid;grid-template-columns:78px 1fr 86px;align-items:center;gap:10px;margin-bottom:11px}
+.row label{font-size:12.5px;color:var(--muted)}
+.row input[type=range]{width:100%;accent-color:var(--green)}
+.num{background:var(--field);border:1px solid var(--line-mid);border-radius:3px;padding:7px 8px;width:100%;
+  font-variant-numeric:tabular-nums;text-align:right;font-size:14px}
+select.num{text-align:left}
+h3{font-size:11px;letter-spacing:2px;text-transform:uppercase;color:var(--green);margin:14px 0 9px;font-weight:700}
+h3:first-child{margin-top:2px}
+.seg{display:flex;border:1px solid var(--line-mid);border-radius:3px;overflow:hidden;margin-bottom:11px}
+.seg button{flex:1;background:transparent;border:0;padding:9px 6px;font-size:13px;cursor:pointer;color:var(--muted)}
+.seg button+button{border-left:1px solid var(--line)}
+.seg button[aria-pressed=true]{background:var(--green);color:#012;font-weight:900}
+.check{display:flex;align-items:center;gap:10px;font-size:14px;padding:7px 0;cursor:pointer}
+.check input{accent-color:var(--green);width:18px;height:18px;margin:0}
+.hint{font-size:12px;color:var(--muted);line-height:1.5;margin:4px 0 10px}
+.hint b{color:var(--text)}
+.btnrow{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 10px}
+table{width:100%;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums}
+th{text-align:left;font-size:10.5px;letter-spacing:1.4px;text-transform:uppercase;color:var(--muted);font-weight:700;padding:4px 4px 6px;border-bottom:1px solid var(--line)}
+td{padding:6px 4px;border-bottom:1px solid rgba(243,242,239,.06)}
+td:not(:first-child),th:not(:first-child){text-align:right}
+.warnline{border-left:3px solid var(--warn);background:rgba(245,165,36,.08);padding:7px 9px;font-size:12.5px;margin-bottom:6px;border-radius:0 3px 3px 0}
+.flash{position:fixed;inset:0;background:#fff;opacity:0;pointer-events:none;z-index:20;transition:opacity .35s}
+.flash.on{opacity:.7;transition:none}
+.modal{position:fixed;inset:0;z-index:40;background:rgba(0,3,5,.72);display:flex;align-items:center;justify-content:center;padding:16px}
+.mbox{background:#04141F;border:1px solid var(--line-mid);border-radius:8px;width:min(400px,100%);max-height:100%;overflow:auto;padding:18px}
+.mbox h2{margin:0 0 4px;font-size:18px;font-weight:900}
+.qrwrap{background:#fff;border-radius:6px;padding:12px;margin:12px auto;width:min(260px,100%);aspect-ratio:1}
+.qrwrap canvas{width:100%;height:100%;display:block;image-rendering:pixelated}
+.mbox .num{text-align:left;font-size:13px}
+.urlrow{font-size:11.5px;color:var(--muted);word-break:break-all;margin:4px 0 10px;max-height:4.5em;overflow:hidden}
+.toast{position:fixed;left:50%;top:calc(env(safe-area-inset-top,0px) + 70px);transform:translateX(-50%);z-index:30;
+  background:rgba(1,7,11,.95);border:1px solid var(--line-mid);border-radius:3px;padding:10px 14px;font-size:13.5px;max-width:calc(100% - 28px)}
+.toast.err{border-color:var(--fail);color:#ffb3b5}
+@media (max-width:620px){
+  .top{flex-wrap:wrap;row-gap:8px}
+  .chip{order:5;font-size:12px;padding:6px 9px}
+  .brand b{font-size:17px}
+}
+@media (prefers-reduced-motion:reduce){.sheet{transition:none}}
+</style>
+</head>
+<body>
+<div id="app">
+  <video id="camFeed" playsinline muted autoplay hidden></video>
+  <div id="stage"></div>
+
+  <div class="top">
+    <div class="brand"><span>Safety enclosure</span><b>SEOD <strong>AR</strong></b></div>
+    <div class="chip" id="chip">-</div>
+    <button class="btn" id="btnUnits" title="Switch units">mm</button>
+    <button class="btn" id="btnShare" title="QR code and link to open this on a phone">QR</button>
+    <button class="btn primary arbtn" id="btnAR">AR</button>
+    <button class="btn" id="btnExit" hidden>Exit AR</button>
+  </div>
+  <div class="status" id="status" hidden></div>
+  <div class="artools" id="arTools" hidden>
+    <button class="btn" id="arPlace" data-xr>Move</button>
+    <button class="btn" id="arMeasW" data-xr>Measure W</button>
+    <button class="btn" id="arMeasD" data-xr>Measure D</button>
+    <div class="seg" style="margin:0" id="arScale"><button data-s="real">1:1</button><button data-s="fit">Tabletop</button></div>
+    <button class="btn" id="arTurn" title="Turn 15°">⟳</button>
+    <button class="btn" id="arGyro" data-cam aria-pressed="false">Lock to room</button>
+    <button class="btn" id="arShot" data-cam>Photo</button>
+  </div>
+
+  <section class="sheet" id="sheet" aria-label="Design controls">
+    <button class="grab" id="grab" aria-label="Show or hide the controls"><i></i></button>
+    <div class="tabs" role="tablist">
+      <button role="tab" data-tab="size" aria-selected="true">Size</button>
+      <button role="tab" data-tab="hinge" aria-selected="false">Hinge</button>
+      <button role="tab" data-tab="parts" aria-selected="false">Parts</button>
+      <button role="tab" data-tab="build" aria-selected="false">Build list</button>
+    </div>
+    <div class="body">
+      <!-- SIZE -->
+      <div class="pane" data-pane="size">
+        <h3>Outside size</h3>
+        <div class="row"><label for="rW">Width</label><input type="range" id="rW" data-k="W" min="150" max="2000" step="5"><input class="num" data-n="W" inputmode="decimal"></div>
+        <div class="row"><label for="rD">Depth</label><input type="range" id="rD" data-k="D" min="150" max="2000" step="5"><input class="num" data-n="D" inputmode="decimal"></div>
+        <div class="row"><label for="rH">Height</label><input type="range" id="rH" data-k="H" min="150" max="2000" step="5"><input class="num" data-n="H" inputmode="decimal"></div>
+        <h3>Acrylic</h3>
+        <div class="row"><label for="sT">Thickness</label>
+          <select class="num" id="sT" data-sel="t" style="grid-column:2 / span 2"><option value="3">3 mm</option><option value="4">4 mm</option><option value="5">5 mm</option><option value="6">6 mm</option><option value="8">8 mm</option><option value="10">10 mm</option></select></div>
+        <div class="seg" id="segTint"><button data-v="clear">Clear</button><button data-v="smoke">Smoke</button><button data-v="amber">UV amber</button><button data-v="blue">Blue</button></div>
+        <label class="check"><input type="checkbox" data-c="base"> Base panel (6-sided box)</label>
+        <h3>Fit around a machine</h3>
+        <div class="row"><label for="rC">Clearance</label><input type="range" id="rC" data-k="clear" min="0" max="150" step="5"><input class="num" data-n="clear" inputmode="decimal"></div>
+        <p class="hint">In AR on Android, <b>Measure W</b> and <b>Measure D</b> let you tap the two sides of the machine on the floor. The box is sized to that plus the clearance on each side.</p>
+      </div>
+
+      <!-- HINGE -->
+      <div class="pane" data-pane="hinge" hidden>
+        <h3>What opens</h3>
+        <div class="seg" id="segOpen"><button data-v="lid">Top lid</button><button data-v="door">Front door</button></div>
+        <h3>Hinge edge</h3>
+        <div class="seg" id="segEdge"></div>
+        <div class="row"><label for="sN">Hinges</label>
+          <select class="num" id="sN" data-sel="hinges" style="grid-column:2 / span 2"><option value="2">2 hinges</option><option value="3">3 hinges</option><option value="4">4 hinges</option></select></div>
+        <h3>Open / close</h3>
+        <div class="row"><label for="rA">Angle</label><input type="range" id="rA" min="0" max="110" step="1" value="0"><output class="num" id="oA">0°</output></div>
+        <div class="btnrow"><button class="btn primary" id="btnToggle">Open</button><button class="btn" id="btnStop">Stop at 90°</button></div>
+        <p class="hint">The stop is the angle the hinge or a stay should hold the cover at. It is shown in the build list.</p>
+      </div>
+
+      <!-- PARTS -->
+      <div class="pane" data-pane="parts" hidden>
+        <h3>Frame and hardware</h3>
+        <label class="check"><input type="checkbox" data-c="posts"> Corner posts (3D-printed, 15 mm)</label>
+        <label class="check"><input type="checkbox" data-c="handle"> Handle on the opening edge</label>
+        <label class="check"><input type="checkbox" data-c="interlock"> Safety interlock switch</label>
+        <h3>Panel features</h3>
+        <label class="check"><input type="checkbox" data-c="vents"> Vent slots on both sides</label>
+        <label class="check"><input type="checkbox" data-c="notch"> Cable notch in the back wall</label>
+        <div class="row" data-notch><label for="rNW">Notch W</label><input type="range" id="rNW" data-k="notchW" min="20" max="300" step="5"><input class="num" data-n="notchW" inputmode="decimal"></div>
+        <div class="row" data-notch><label for="rNH">Notch H</label><input type="range" id="rNH" data-k="notchH" min="15" max="200" step="5"><input class="num" data-n="notchH" inputmode="decimal"></div>
+        <p class="hint">Vent slots are 6 mm wide, under the 12 mm finger-safe limit.</p>
+      </div>
+
+      <!-- BUILD -->
+      <div class="pane" data-pane="build" hidden>
+        <div id="warns"></div>
+        <h3>Laser cut list</h3>
+        <table id="cutTable"></table>
+        <h3>Hardware</h3>
+        <table id="hwTable"></table>
+        <div class="btnrow" style="margin-top:14px">
+          <button class="btn primary" id="dlSvg">Laser SVG</button>
+          <button class="btn" id="dlJson">Save design</button>
+          <button class="btn" id="ldJson">Open design</button>
+          <button class="btn" id="btnReset">Reset</button>
+        </div>
+        <p class="hint">SVG is 1:1 in mm. Red = cut, blue = engrave (panel names). Hinge and handle holes are M4 clearance (Ø4.5).</p>
+        <input type="file" id="fileJson" accept=".json,application/json" hidden>
+      </div>
+    </div>
+  </section>
+</div>
+<div class="flash" id="flash"></div>
+<div class="modal" id="shareModal" hidden role="dialog" aria-modal="true" aria-labelledby="shareTitle">
+  <div class="mbox">
+    <h2 id="shareTitle">Open on a phone</h2>
+    <p class="hint" style="margin:0">Scan with the phone camera. AR needs the https link (GitHub Pages).</p>
+    <div class="seg" id="qrTarget" style="margin:12px 0 0"><button data-v="web" aria-pressed="true">Web app</button><button data-v="apk" aria-pressed="false">Android app (APK)</button></div>
+    <div class="qrwrap"><canvas id="qrCv" width="300" height="300"></canvas></div>
+    <div class="urlrow" id="qrUrl"></div>
+    <label class="check" id="qrDesignRow"><input type="checkbox" id="qrWithDesign" checked> Include this design (size, hinge, parts)</label>
+    <label class="hint" for="qrBase" style="display:block;margin:8px 0 4px">Web address of the app</label>
+    <input class="num" id="qrBase" type="url" spellcheck="false" autocomplete="off">
+    <div class="btnrow" style="margin-top:12px">
+      <button class="btn primary" id="qrShare">Share link</button>
+      <button class="btn" id="qrCopy">Copy link</button>
+      <button class="btn" id="qrPng">Save QR</button>
+      <button class="btn" id="qrClose">Close</button>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast" hidden></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
+<script>
+(function () {
+'use strict';
+const $ = (s, r) => (r || document).querySelector(s), $$ = (s, r) => [...(r || document).querySelectorAll(s)];
+const M = 0.001;                                  // mm -> m
+const LS = 'seod-ar.v1';
+const DEF = { W: 600, D: 450, H: 500, t: 5, tint: 'clear', base: false, clear: 30, open: 'lid', edge: 'back', hinges: 2, stop: 90,
+  posts: true, handle: true, interlock: true, vents: false, notch: true, notchW: 80, notchH: 40 };
+let P = Object.assign({}, DEF);
+try { const s = JSON.parse(localStorage.getItem(LS) || 'null'); if (s) P = Object.assign({}, DEF, s); } catch (e) { /* fresh */ }
+let units = 'mm', angle = 0, animTo = null;
+// a shared link can carry a design: #d=<base64url of the values that differ from the defaults>
+const b64u = { enc: (o) => btoa(unescape(encodeURIComponent(JSON.stringify(o)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''),
+  dec: (t) => JSON.parse(decodeURIComponent(escape(atob(t.replace(/-/g, '+').replace(/_/g, '/'))))) };
+let fromLink = false;
+try {
+  const m = location.hash.match(/[#&]d=([A-Za-z0-9_-]+)/);
+  if (m) { const o = b64u.dec(m[1]); for (const k of Object.keys(DEF)) if (k in o) P[k] = o[k]; fromLink = true; history.replaceState(null, '', location.pathname + location.search); }
+} catch (e) { /* bad link: keep the saved design */ }
+
+/* ---------------- toast ---------------- */
+let tT = 0;
+function toast(m, err) { const t = $('#toast'); t.textContent = m; t.className = 'toast' + (err ? ' err' : ''); t.hidden = false; clearTimeout(tT); tT = setTimeout(() => t.hidden = true, err ? 5200 : 2600); }
+if (!window.THREE) { document.body.innerHTML = '<p style="padding:20px;font-family:sans-serif;color:#fff">Could not load the 3D library - check the internet connection and reload.</p>'; return; }
+
+/* ---------------- three setup ---------------- */
+const stage = $('#stage');
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+renderer.setClearColor(0x000000, 0);
+renderer.xr.enabled = true;
+renderer.xr.setReferenceSpaceType('local');
+stage.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+const cam = new THREE.PerspectiveCamera(45, 1, 0.01, 100);
+scene.add(new THREE.HemisphereLight(0xffffff, 0x334455, 0.9));
+const sun = new THREE.DirectionalLight(0xffffff, 0.75); sun.position.set(1.5, 3, 2); scene.add(sun);
+const fill = new THREE.DirectionalLight(0xffffff, 0.3); fill.position.set(-2, 1.5, -1); scene.add(fill);
+
+const world = new THREE.Group(); scene.add(world);           // AR anchor (Y up, metres)
+const scaler = new THREE.Group(); world.add(scaler);
+let box = new THREE.Group(); scaler.add(box);
+
+// soft contact shadow, also grounds the model in AR
+const shCv = document.createElement('canvas'); shCv.width = shCv.height = 128;
+{ const c = shCv.getContext('2d'), g = c.createRadialGradient(64, 64, 8, 64, 64, 64); g.addColorStop(0, 'rgba(0,0,0,.55)'); g.addColorStop(1, 'rgba(0,0,0,0)'); c.fillStyle = g; c.fillRect(0, 0, 128, 128); }
+const shadow = new THREE.Mesh(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(shCv), transparent: true, depthWrite: false }));
+shadow.position.y = 0.0005; shadow.renderOrder = -1; scaler.add(shadow);
+const grid = new THREE.GridHelper(4, 40, 0x1d4a5e, 0x0c2a38); grid.material.transparent = true; grid.material.opacity = 0.55; scene.add(grid);
+
+const TINT = { clear: 0xcfefff, smoke: 0x5d6970, amber: 0xff9a2e, blue: 0x58c0ff };
+const MAT = {
+  acr: new THREE.MeshPhongMaterial({ color: TINT.clear, transparent: true, opacity: 0.24, shininess: 90, specular: 0x99aabb, side: THREE.DoubleSide, depthWrite: false }),
+  edge: new THREE.LineBasicMaterial({ color: 0x9fe2ff, transparent: true, opacity: 0.9 }),
+  post: new THREE.MeshLambertMaterial({ color: 0xff8c2a }),
+  metal: new THREE.MeshPhongMaterial({ color: 0x9aa4ab, shininess: 70, specular: 0xffffff }),
+  dark: new THREE.MeshLambertMaterial({ color: 0x1b1f23 }),
+  red: new THREE.MeshLambertMaterial({ color: 0xe5484d }),
+  reticle: new THREE.MeshBasicMaterial({ color: 0x63e079, side: THREE.DoubleSide, depthTest: false, transparent: true }),
+  mpt: new THREE.MeshBasicMaterial({ color: 0x00cdff, depthTest: false }),
+};
+
+/* ---------------- geometry helpers ---------------- */
+// flat panel w x h (mm) in its local XY, thickness t along +Z; holes = rects/circles, notch = bottom-centre cut
+function panelGeo(w, h, t, f) {
+  f = f || {};
+  const s = new THREE.Shape();
+  if (f.notch && f.notch.w < w - 20 && f.notch.h < h - 20) {
+    const a = (w - f.notch.w) / 2, b = a + f.notch.w, r = Math.min(f.notch.w / 2, 8);
+    s.moveTo(0, 0); s.lineTo(a, 0); s.lineTo(a, f.notch.h - r); s.quadraticCurveTo(a, f.notch.h, a + r, f.notch.h);
+    s.lineTo(b - r, f.notch.h); s.quadraticCurveTo(b, f.notch.h, b, f.notch.h - r); s.lineTo(b, 0); s.lineTo(w, 0); s.lineTo(w, h); s.lineTo(0, h); s.lineTo(0, 0);
+  } else { s.moveTo(0, 0); s.lineTo(w, 0); s.lineTo(w, h); s.lineTo(0, h); s.lineTo(0, 0); }
+  for (const r of f.slots || []) { const p = new THREE.Path(); const rr = r.w / 2; p.absarc(r.x + rr, r.y + rr, rr, Math.PI, 2 * Math.PI, false); p.absarc(r.x + rr, r.y + r.h - rr, rr, 0, Math.PI, false); s.holes.push(p); }
+  for (const c of f.holes || []) { const p = new THREE.Path(); p.absarc(c.x, c.y, c.d / 2, 0, Math.PI * 2, true); s.holes.push(p); }
+  const g = new THREE.ExtrudeGeometry(s, { depth: t, bevelEnabled: false, curveSegments: 10 });
+  g.scale(M, M, M);
+  return g;
+}
+const V3 = (x, y, z) => new THREE.Vector3(x, y, z);
+function orientedBox(center, ax, dir, nrm, la, ld, ln, mat) {   // sizes in m along the three directions
+  const m = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), mat);
+  const b = new THREE.Matrix4().makeBasis(ax, dir, nrm);
+  m.quaternion.setFromRotationMatrix(b); m.scale.set(la, ld, ln); m.position.copy(center);
+  return m;
+}
+function cylAlong(center, axis, r, len, mat) {
+  const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, len, 18), mat);
+  m.quaternion.setFromUnitVectors(V3(0, 1, 0), axis.clone().normalize()); m.position.copy(center);
+  return m;
+}
+
+/* ---------------- design rules ---------------- */
+function edgesFor(open) { return open === 'door' ? [['left', 'Left'], ['right', 'Right']] : [['back', 'Back'], ['front', 'Front'], ['left', 'Left'], ['right', 'Right']]; }
+function dims() {
+  const t = +P.t, yb = P.base ? t : 0, Hw = P.H - t - yb;
+  return { W: +P.W, D: +P.D, H: +P.H, t, yb, Hw };
+}
+// panel list in closed state: name, size (mm), placement (m), features
+function panelList() {
+  const d = dims(), { W, D, H, t, yb, Hw } = d, pl = [];
+  const side = (name) => {
+    const w = D - 2 * t, f = {};
+    if (P.vents) {
+      const n = Math.max(0, Math.min(14, Math.floor((w - 60) / 16))), sh = Math.min(70, Hw * 0.35), y0 = Hw - 30 - sh, x0 = (w - (n * 16 - 10)) / 2;
+      if (n > 0 && y0 > 20) f.slots = Array.from({ length: n }, (_, i) => ({ x: x0 + i * 16, y: y0, w: 6, h: sh }));
+    }
+    return f;
+  };
+  pl.push({ id: 'back', name: 'Back', w: W, h: Hw, f: P.notch ? { notch: { w: +P.notchW, h: +P.notchH } } : {}, pos: V3(-W / 2, yb, -D / 2), rot: [0, 0, 0] });
+  pl.push({ id: 'front', name: P.open === 'door' ? 'Front door' : 'Front', w: W, h: Hw, f: {}, pos: V3(-W / 2, yb, D / 2 - t), rot: [0, 0, 0] });
+  pl.push({ id: 'left', name: 'Left', w: D - 2 * t, h: Hw, f: side('left'), pos: V3(-W / 2 + t, yb, -D / 2 + t), rot: [0, -Math.PI / 2, 0] });
+  pl.push({ id: 'right', name: 'Right', w: D - 2 * t, h: Hw, f: side('right'), pos: V3(W / 2, yb, -D / 2 + t), rot: [0, -Math.PI / 2, 0] });
+  pl.push({ id: 'lid', name: P.open === 'lid' ? 'Lid' : 'Top', w: W, h: D, f: {}, pos: V3(-W / 2, H - t, D / 2), rot: [-Math.PI / 2, 0, 0] });
+  if (P.base) pl.push({ id: 'base', name: 'Base', w: W, h: D, f: {}, pos: V3(-W / 2, 0, D / 2), rot: [-Math.PI / 2, 0, 0] });
+  return pl;
+}
+// hinge frame (mm): pivot, axis, fixed-leaf direction/normal, moving-leaf direction/normal, edge length, moving panel depth
+function hingeFrame() {
+  const { W, D, H, yb, Hw } = dims();
+  if (P.open === 'door') {
+    const L = P.edge === 'right';
+    return { moving: 'front', pivot: V3(L ? W / 2 : -W / 2, yb, D / 2), axis: V3(0, 1, 0), a0: 0, len: Hw,
+      fDir: V3(0, 0, -1), fN: V3(L ? 1 : -1, 0, 0), mDir: V3(L ? -1 : 1, 0, 0), mN: V3(0, 0, 1), span: W,
+      rot: (a) => new THREE.Euler(0, (L ? 1 : -1) * a, 0) };
+  }
+  const e = P.edge;
+  if (e === 'back' || e === 'front') {
+    const s = e === 'back' ? -1 : 1;
+    return { moving: 'lid', pivot: V3(0, H, s * D / 2), axis: V3(1, 0, 0), a0: -W / 2, len: W,
+      fDir: V3(0, -1, 0), fN: V3(0, 0, s), mDir: V3(0, 0, -s), mN: V3(0, 1, 0), span: D,
+      rot: (a) => new THREE.Euler(s * a, 0, 0) };
+  }
+  const s = e === 'left' ? -1 : 1;
+  return { moving: 'lid', pivot: V3(s * W / 2, H, 0), axis: V3(0, 0, 1), a0: -D / 2, len: D,
+    fDir: V3(0, -1, 0), fN: V3(s, 0, 0), mDir: V3(-s, 0, 0), mN: V3(0, 1, 0), span: W,
+    rot: (a) => new THREE.Euler(0, 0, -s * a) };
+}
+
+/* ---------------- build the 3D model ---------------- */
+let movingGroup = null, holes3d = [], panelMats = {};
+function build() {
+  scaler.remove(box); box.traverse(o => { if (o.geometry) o.geometry.dispose(); });
+  box = new THREE.Group(); scaler.add(box);
+  MAT.acr.color.setHex(TINT[P.tint] || TINT.clear); MAT.acr.opacity = P.tint === 'clear' ? 0.22 : 0.34;
+  const d = dims(), hf = hingeFrame();
+  holes3d = []; panelMats = {};
+  const mm = (v) => v.clone().multiplyScalar(M);
+  const pivotM = mm(hf.pivot);
+  movingGroup = new THREE.Group(); movingGroup.position.copy(pivotM); box.add(movingGroup);
+  const addTo = (obj, moving) => { if (moving) { obj.position.sub(pivotM); movingGroup.add(obj); } else box.add(obj); };
+
+  // hardware first (its holes go into the panels)
+  const r = 5, leafL = 40, leafD = 28, leafT = 2;
+  const hingeAt = [];
+  for (let i = 0; i < +P.hinges; i++) {
+    const margin = Math.min(60, hf.len * 0.12), u = hf.a0 + margin + (hf.len - 2 * margin) * (i / Math.max(1, +P.hinges - 1));
+    hingeAt.push(hf.pivot.clone().add(hf.axis.clone().multiplyScalar(u)));   // lid: pivot = edge centre (a0 = -len/2); door: pivot = bottom (a0 = 0)
+  }
+  hingeAt.forEach((c) => {
+    const barrel = cylAlong(mm(c), hf.axis, r * M, leafL * M, MAT.metal); box.add(barrel);
+    const fc = c.clone().add(hf.fDir.clone().multiplyScalar(r + leafD / 2)).add(hf.fN.clone().multiplyScalar(leafT / 2));
+    const mc = c.clone().add(hf.mDir.clone().multiplyScalar(r + leafD / 2)).add(hf.mN.clone().multiplyScalar(leafT / 2));
+    box.add(orientedBox(mm(fc), hf.axis, hf.fDir, hf.fN, leafL * M, leafD * M, leafT * M, MAT.metal));
+    addTo(orientedBox(mm(mc), hf.axis, hf.mDir, hf.mN, leafL * M, leafD * M, leafT * M, MAT.metal), true);
+    for (const k of [-12, 12]) {
+      holes3d.push(c.clone().add(hf.axis.clone().multiplyScalar(k)).add(hf.fDir.clone().multiplyScalar(r + leafD / 2)));
+      holes3d.push(c.clone().add(hf.axis.clone().multiplyScalar(k)).add(hf.mDir.clone().multiplyScalar(r + leafD / 2)));
+    }
+  });
+  // handle on the far edge of the moving panel
+  const mid = hf.pivot.clone().add(hf.axis.clone().multiplyScalar(hf.a0 + hf.len / 2));   // middle of the hinge edge
+  const far = mid.clone().add(hf.mDir.clone().multiplyScalar(hf.span - 45));
+  if (P.handle) {
+    const bl = Math.min(140, hf.len * 0.45), h = 32;
+    const bar = far.clone().add(hf.mN.clone().multiplyScalar(h));
+    addTo(orientedBox(mm(bar), hf.axis, hf.mDir, hf.mN, bl * M, 12 * M, 10 * M, MAT.dark), true);
+    for (const k of [-(bl / 2 - 7), bl / 2 - 7]) {
+      const sc = far.clone().add(hf.axis.clone().multiplyScalar(k)).add(hf.mN.clone().multiplyScalar(h / 2));
+      addTo(orientedBox(mm(sc), hf.axis, hf.mDir, hf.mN, 10 * M, 10 * M, h * M, MAT.dark), true);
+      holes3d.push(far.clone().add(hf.axis.clone().multiplyScalar(k)));
+    }
+  }
+  if (P.interlock) {
+    const sw = far.clone().add(hf.mDir.clone().multiplyScalar(20)).sub(hf.mN.clone().multiplyScalar(d.t + 14)).add(hf.axis.clone().multiplyScalar(Math.min(120, hf.len * 0.3)));
+    box.add(orientedBox(mm(sw), hf.axis, hf.mDir, hf.mN, 30 * M, 16 * M, 24 * M, MAT.dark));
+    box.add(orientedBox(mm(sw.clone().add(hf.mN.clone().multiplyScalar(14))), hf.axis, hf.mDir, hf.mN, 5 * M, 5 * M, 5 * M, MAT.red));
+  }
+  // corner posts
+  if (P.posts) {
+    const s = 15, x = d.W / 2 - d.t - s / 2, z = d.D / 2 - d.t - s / 2;
+    for (const [sx, sz] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(s * M, d.Hw * M, s * M), MAT.post);
+      m.position.set(sx * x * M, (d.yb + d.Hw / 2) * M, sz * z * M); box.add(m);
+    }
+  }
+  // panels (holes from hardware projected into each panel)
+  for (const p of panelList()) {
+    const mat4 = new THREE.Matrix4().compose(p.pos, new THREE.Quaternion().setFromEuler(new THREE.Euler(...p.rot)), V3(1, 1, 1));
+    const inv = mat4.clone().invert();
+    const holes = [];
+    for (const h of holes3d) { const q = h.clone().applyMatrix4(inv); if (q.z > -3 && q.z < d.t + 3 && q.x > 4 && q.x < p.w - 4 && q.y > 4 && q.y < p.h - 4) holes.push({ x: q.x, y: q.y, d: 4.5 }); }
+    p.f.holes = holes; panelMats[p.id] = p;
+    const g = panelGeo(p.w, p.h, d.t, p.f);
+    const mesh = new THREE.Mesh(g, MAT.acr); mesh.renderOrder = 2;
+    const edges = new THREE.LineSegments(new THREE.EdgesGeometry(g, 25), MAT.edge);
+    const grp = new THREE.Group(); grp.add(mesh, edges);
+    grp.position.copy(p.pos).multiplyScalar(M); grp.rotation.set(...p.rot);
+    addTo(grp, p.id === hf.moving);
+  }
+  // ground shadow
+  shadow.scale.set(d.W * M * 1.5, 1, d.D * M * 1.5);
+  applyAngle();
+  ui();
+}
+function applyAngle() {
+  if (!movingGroup) return;
+  const hf = hingeFrame(), e = hf.rot(angle * Math.PI / 180);
+  movingGroup.rotation.copy(e);
+  $('#rA').value = angle; $('#oA').textContent = Math.round(angle) + '°';
+  $('#btnToggle').textContent = angle > 1 ? 'Close' : 'Open';
+}
+
+/* ---------------- numbers for the build list ---------------- */
+function report() {
+  const d = dims(), pl = panelList(), warns = [];
+  let area = 0; for (const p of pl) area += p.w * p.h / 1e6;
+  const kg = area * d.t * 1.19;                     // acrylic 1.19 g/cm3
+  if (P.open === 'lid' && d.W * d.D / 1e6 * d.t * 1.19 > 4) warns.push('The lid weighs over 4 kg - add a gas strut or a stay so it cannot drop.');
+  if (+P.hinges === 2 && (P.open === 'door' ? d.Hw : P.edge === 'left' || P.edge === 'right' ? d.D : d.W) > 900) warns.push('Long hinge edge: use 3 or more hinges.');
+  if (Math.max(d.W, d.D, d.H) > 1000 && d.t < 6) warns.push('Panels over 1 m in 3-5 mm acrylic will flex - consider 6 mm or more.');
+  if (P.notch && (+P.notchW > 12 || +P.notchH > 12)) warns.push('The cable notch is wider than 12 mm - fill it with a brush strip or grommet so fingers cannot reach in.');
+  if (!P.interlock) warns.push('No interlock: the cover can be opened while the machine runs.');
+  return { d, pl, area, kg, warns };
+}
+const fmtL = (mm) => units === 'mm' ? Math.round(mm) + '' : (mm / 25.4).toFixed(2);
+const uL = () => units === 'mm' ? 'mm' : 'in';
+
+/* ---------------- UI ---------------- */
+function ui() {
+  for (const el of $$('[data-k]')) { if (document.activeElement !== el) el.value = P[el.dataset.k]; }
+  for (const el of $$('[data-n]')) { if (document.activeElement !== el) el.value = fmtL(+P[el.dataset.n]); }
+  for (const el of $$('[data-sel]')) el.value = String(P[el.dataset.sel]);
+  for (const el of $$('[data-c]')) el.checked = !!P[el.dataset.c];
+  $$('#segTint button').forEach(b => b.setAttribute('aria-pressed', b.dataset.v === P.tint));
+  $$('#segOpen button').forEach(b => b.setAttribute('aria-pressed', b.dataset.v === P.open));
+  $('#segEdge').innerHTML = edgesFor(P.open).map(([v, l]) => `<button data-v="${v}" aria-pressed="${v === P.edge}">${l}</button>`).join('');
+  $$('[data-notch]').forEach(e => e.hidden = !P.notch);
+  $('#btnStop').textContent = `Stop at ${P.stop}°`;
+  $('#btnUnits').textContent = units;
+  const R = report();
+  $('#chip').textContent = `${fmtL(R.d.W)} × ${fmtL(R.d.D)} × ${fmtL(R.d.H)} ${uL()} · ${R.kg.toFixed(1)} kg`;
+  $('#cutTable').innerHTML = `<tr><th>Panel</th><th>W (${uL()})</th><th>H (${uL()})</th><th>Cut-outs</th></tr>` +
+    R.pl.map(p => { const f = (panelMats[p.id] || p).f; return `<tr><td>${p.name}</td><td>${fmtL(p.w)}</td><td>${fmtL(p.h)}</td><td>${(f.holes || []).length}${f.slots && f.slots.length ? ' + ' + f.slots.length + ' slots' : ''}${f.notch ? ' + notch' : ''}</td></tr>`; }).join('') +
+    `<tr><td><b>Acrylic ${R.d.t} mm</b></td><td colspan="2">${R.area.toFixed(2)} m²</td><td>${R.kg.toFixed(1)} kg</td></tr>`;
+  const n = +P.hinges, hw = [['Hinge, 40 mm leaf, stainless', n], ['M4 × 12 screw + nyloc nut (hinges)', n * 4]];
+  if (P.handle) hw.push(['Pull handle, ~' + Math.round(Math.min(140, hingeFrame().len * 0.45)) + ' mm centres', 1], ['M4 × 16 screw (handle)', 2]);
+  if (P.interlock) hw.push(['Safety interlock switch + actuator', 1]);
+  if (P.posts) hw.push(['Corner post 15 × 15 × ' + Math.round(R.d.Hw) + ' mm (PETG)', 4], ['M3 heat-set insert + M3 × 8 screw', 4 * Math.max(2, Math.ceil(R.d.Hw / 150)) * 2]);
+  if (P.open === 'lid' && R.d.W * R.d.D / 1e6 * R.d.t * 1.19 > 4) hw.push(['Gas strut / lid stay', 1]);
+  if (P.notch) hw.push(['Brush strip for the cable notch', 1]);
+  hw.push(['Hinge stop angle', P.stop + '°']);
+  $('#hwTable').innerHTML = '<tr><th>Item</th><th>Qty</th></tr>' + hw.map(([a, b]) => `<tr><td>${a}</td><td>${b}</td></tr>`).join('');
+  $('#warns').innerHTML = R.warns.map(w => `<div class="warnline">${w}</div>`).join('');
+  save();
+}
+let saveT = 0;
+function save() { clearTimeout(saveT); saveT = setTimeout(() => { try { localStorage.setItem(LS, JSON.stringify(P)); } catch (e) { /* private mode */ } }, 300); }
+function set(k, v, rebuild) { P[k] = v; if (rebuild !== false) build(); else ui(); }
+function clampDims() { for (const k of ['W', 'D', 'H']) P[k] = Math.max(150, Math.min(3000, Math.round(+P[k] || 150))); }
+
+$$('[data-k]').forEach(el => el.addEventListener('input', () => { set(el.dataset.k, +el.value); }));
+$$('[data-n]').forEach(el => el.addEventListener('change', () => {
+  const v = parseFloat(String(el.value).replace(',', '.')); if (isNaN(v)) { ui(); return; }
+  P[el.dataset.n] = units === 'mm' ? v : v * 25.4; clampDims(); build();
+}));
+$$('[data-sel]').forEach(el => el.addEventListener('change', () => set(el.dataset.sel, +el.value)));
+$$('[data-c]').forEach(el => el.addEventListener('change', () => set(el.dataset.c, el.checked)));
+$('#segTint').addEventListener('click', e => { const b = e.target.closest('[data-v]'); if (b) set('tint', b.dataset.v); });
+$('#segOpen').addEventListener('click', e => { const b = e.target.closest('[data-v]'); if (!b) return; P.open = b.dataset.v; if (!edgesFor(P.open).some(x => x[0] === P.edge)) P.edge = edgesFor(P.open)[0][0]; angle = 0; build(); });
+$('#segEdge').addEventListener('click', e => { const b = e.target.closest('[data-v]'); if (b) { angle = 0; set('edge', b.dataset.v); } });
+$('#rA').addEventListener('input', e => { animTo = null; angle = +e.target.value; applyAngle(); });
+$('#btnToggle').addEventListener('click', () => { animTo = angle > 1 ? 0 : +P.stop; });
+$('#btnStop').addEventListener('click', () => { P.stop = Math.max(30, Math.min(110, Math.round(angle) || 90)); toast(`Stop set to ${P.stop}°`); ui(); });
+$('#btnUnits').addEventListener('click', () => { units = units === 'mm' ? 'in' : 'mm'; ui(); });
+$$('.tabs [data-tab]').forEach(b => b.addEventListener('click', () => {
+  $$('.tabs [data-tab]').forEach(x => x.setAttribute('aria-selected', x === b));
+  $$('.pane').forEach(p => p.hidden = p.dataset.pane !== b.dataset.tab);
+  $('#sheet').classList.remove('min');
+}));
+$('#grab').addEventListener('click', () => { $('#sheet').classList.toggle('min'); if (AR.mode !== 'xr' && !AR.gyro) setTimeout(fitView, 260); });
+$('#btnReset').addEventListener('click', () => { if (confirm('Reset to the default box?')) { P = Object.assign({}, DEF); angle = 0; build(); fitView(); } });
+
+/* ---------------- files ---------------- */
+function download(name, data, mime) {
+  const blob = data instanceof Blob ? data : new Blob([data], { type: mime });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+}
+function svgFile() {
+  const pl = panelList(), gap = 8, maxW = 1400; let x = gap, y = gap, rowH = 0, W = 0, out = [];
+  const f2 = (v) => (+v).toFixed(2);
+  for (const p of pl) {
+    const pm = panelMats[p.id] || p;
+    if (x + p.w > maxW && x > gap) { x = gap; y += rowH + gap; rowH = 0; }
+    const oy = y, ox = x, Y = (v) => oy + p.h - v;            // flip so the panel reads as seen from outside
+    let d;
+    if (pm.f.notch) { const a = (p.w - pm.f.notch.w) / 2, b = a + pm.f.notch.w, h = pm.f.notch.h; d = `M${f2(ox)} ${f2(Y(0))}H${f2(ox + a)}V${f2(Y(h))}H${f2(ox + b)}V${f2(Y(0))}H${f2(ox + p.w)}V${f2(Y(p.h))}H${f2(ox)}Z`; }
+    else d = `M${f2(ox)} ${f2(Y(0))}H${f2(ox + p.w)}V${f2(Y(p.h))}H${f2(ox)}Z`;
+    out.push(`<path d="${d}"/>`);
+    for (const s of pm.f.slots || []) out.push(`<rect x="${f2(ox + s.x)}" y="${f2(Y(s.y + s.h))}" width="${s.w}" height="${f2(s.h)}" rx="${s.w / 2}"/>`);
+    for (const h of pm.f.holes || []) out.push(`<circle cx="${f2(ox + h.x)}" cy="${f2(Y(h.y))}" r="${h.d / 2}"/>`);
+    out.push(`<text x="${f2(ox + p.w / 2)}" y="${f2(oy + p.h - 10)}" class="e">${p.name.toUpperCase()} ${Math.round(p.w)}×${Math.round(p.h)}</text>`);
+    x += p.w + gap; rowH = Math.max(rowH, p.h); W = Math.max(W, x);
+  }
+  const H = y + rowH + gap;
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="${f2(W)}mm" height="${f2(H)}mm" viewBox="0 0 ${f2(W)} ${f2(H)}">
+<title>Safety enclosure ${P.W}x${P.D}x${P.H} mm, ${P.t} mm acrylic</title>
+<style>path,rect,circle{fill:none;stroke:#ff0000;stroke-width:0.1}.e{fill:#0000ff;font:6px sans-serif;text-anchor:middle}</style>
+<g id="CUT">${out.filter(s => !s.startsWith('<text')).join('\n')}</g>
+<g id="ENGRAVE">${out.filter(s => s.startsWith('<text')).join('\n')}</g>
+</svg>`;
+}
+$('#dlSvg').addEventListener('click', () => download(`enclosure_${P.W}x${P.D}x${P.H}_laser.svg`, svgFile(), 'image/svg+xml'));
+$('#dlJson').addEventListener('click', () => download(`enclosure_${P.W}x${P.D}x${P.H}.json`, JSON.stringify({ app: 'SEOD AR', v: 1, design: P }, null, 2), 'application/json'));
+$('#ldJson').addEventListener('click', () => $('#fileJson').click());
+$('#fileJson').addEventListener('change', async (e) => {
+  const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+  try { const o = JSON.parse(await f.text()); P = Object.assign({}, DEF, o.design || o); angle = 0; clampDims(); build(); fitView(); toast('Design opened'); }
+  catch (err) { toast('That file is not a saved design', true); }
+});
+
+
+/* ---------------- share: QR code + link ---------------- */
+const LS_BASE = 'seod-ar.base';
+const DEFAULT_BASE = 'https://gnotesamsung7-hue.github.io/seod-ar/';
+function baseUrl() {
+  if (/^https?:$/.test(location.protocol)) return location.origin + location.pathname;
+  try { return localStorage.getItem(LS_BASE) || DEFAULT_BASE; } catch (e) { return DEFAULT_BASE; }
+}
+let qrTarget = 'web';
+function apkUrl(base) {
+  const m = base.match(/^https:\/\/([^.\/]+)\.github\.io\/([^\/#?]+)/i);
+  return m ? `https://github.com/${m[1]}/${m[2]}/releases/latest` : base;
+}
+function shareUrl() {
+  const base = ($('#qrBase').value || '').trim() || baseUrl();
+  if (qrTarget === 'apk') return apkUrl(base);
+  if (!$('#qrWithDesign').checked) return base;
+  const diff = {}; for (const k of Object.keys(DEF)) if (P[k] !== DEF[k]) diff[k] = P[k];
+  return Object.keys(diff).length ? base + '#d=' + b64u.enc(diff) : base;
+}
+function drawQR() {
+  const url = shareUrl(), cv = $('#qrCv'), c = cv.getContext('2d');
+  $('#qrUrl').textContent = url;
+  c.fillStyle = '#fff'; c.fillRect(0, 0, cv.width, cv.height);
+  if (!window.qrcode) { c.fillStyle = '#333'; c.font = '14px sans-serif'; c.textAlign = 'center'; c.fillText('QR library did not load', cv.width / 2, cv.height / 2); return; }
+  const q = qrcode(0, 'M'); q.addData(url); q.make();
+  const n = q.getModuleCount(), px = Math.floor(cv.width / n), off = Math.floor((cv.width - px * n) / 2);
+  c.fillStyle = '#000';
+  for (let r = 0; r < n; r++) for (let k = 0; k < n; k++) if (q.isDark(r, k)) c.fillRect(off + k * px, off + r * px, px, px);
+}
+function openShare() {
+  $('#qrBase').value = baseUrl(); $('#qrBase').disabled = /^https?:$/.test(location.protocol);
+  $('#shareModal').hidden = false; drawQR(); $('#qrClose').focus();
+}
+$('#btnShare').addEventListener('click', openShare);
+$('#qrClose').addEventListener('click', () => { $('#shareModal').hidden = true; $('#btnShare').focus(); });
+$('#shareModal').addEventListener('click', (e) => { if (e.target.id === 'shareModal') $('#shareModal').hidden = true; });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') $('#shareModal').hidden = true; });
+$('#qrWithDesign').addEventListener('change', drawQR);
+$('#qrTarget').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-v]'); if (!b) return; qrTarget = b.dataset.v;
+  $$('#qrTarget button').forEach(x => x.setAttribute('aria-pressed', x === b)); $('#qrDesignRow').hidden = qrTarget === 'apk'; drawQR();
+});
+$('#qrBase').addEventListener('input', () => { try { localStorage.setItem(LS_BASE, $('#qrBase').value.trim()); } catch (e) { /* ignore */ } drawQR(); });
+$('#qrCopy').addEventListener('click', async () => { try { await navigator.clipboard.writeText(shareUrl()); toast('Link copied'); } catch (e) { toast('Copy failed - long-press the link text instead', true); } });
+$('#qrShare').addEventListener('click', async () => {
+  const url = shareUrl();
+  if (navigator.share) { try { await navigator.share({ title: 'Safety enclosure', text: `Safety enclosure ${P.W} × ${P.D} × ${P.H} mm`, url }); } catch (e) { /* cancelled */ } }
+  else { try { await navigator.clipboard.writeText(url); toast('No share menu here - link copied instead'); } catch (e) { toast('Copy the link text under the QR code', true); } }
+});
+$('#qrPng').addEventListener('click', () => {
+  const src = $('#qrCv'), c = document.createElement('canvas'), pad = 40; c.width = src.width + 2 * pad; c.height = src.height + 2 * pad + 46;
+  const x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, c.width, c.height); x.drawImage(src, pad, pad);
+  x.fillStyle = '#000'; x.font = '700 18px Lato, Arial, sans-serif'; x.textAlign = 'center'; x.fillText('SEOD AR - safety enclosure', c.width / 2, src.height + pad + 26);
+  c.toBlob(b => b && download('SEOD_AR_QR.png', b), 'image/png');
+});
+
+/* ---------------- orbit view (also used for camera AR) ---------------- */
+const orbit = { th: 0.7, ph: 1.05, r: 2, tgt: V3(0, 0.25, 0), ptrs: new Map(), pinch: null };
+function fitView() {
+  const d = dims(), R = Math.hypot(d.W, d.D, d.H + d.D * 0.5) * M * 0.5 * scaler.scale.x;
+  const side = window.innerWidth >= 980 && !renderer.xr.isPresenting ? 380 : 0, asp = (window.innerWidth - side) / window.innerHeight;
+  const vf = cam.fov * Math.PI / 180, hf = 2 * Math.atan(Math.tan(vf / 2) * asp), sheetUp = window.innerWidth < 980 && !$('#sheet').classList.contains('min');
+  orbit.r = R / Math.sin(Math.min(vf, hf) / 2) * (sheetUp ? 1.45 : 1.12);
+  orbit.tgt.set(0, d.H * M * (sheetUp ? 0.2 : 0.42) * scaler.scale.x, 0).add(world.position);
+  camOrbit();
+}
+function camOrbit() {
+  const { th, ph, r, tgt } = orbit;
+  cam.position.set(tgt.x + r * Math.sin(ph) * Math.sin(th), tgt.y + r * Math.cos(ph), tgt.z + r * Math.sin(ph) * Math.cos(th));
+  cam.lookAt(tgt); cam.near = r / 100; cam.far = r * 60; cam.updateProjectionMatrix();
+}
+const cvs = renderer.domElement;
+cvs.addEventListener('pointerdown', e => { if (AR.mode === 'xr' || AR.gyro) return; cvs.setPointerCapture(e.pointerId); orbit.ptrs.set(e.pointerId, [e.clientX, e.clientY]); });
+cvs.addEventListener('pointermove', e => {
+  if (!orbit.ptrs.has(e.pointerId)) return;
+  const prev = orbit.ptrs.get(e.pointerId); orbit.ptrs.set(e.pointerId, [e.clientX, e.clientY]);
+  if (orbit.ptrs.size === 1) { orbit.th -= (e.clientX - prev[0]) * 0.008; orbit.ph = Math.max(0.15, Math.min(Math.PI / 2 + 0.25, orbit.ph - (e.clientY - prev[1]) * 0.008)); }
+  else if (orbit.ptrs.size === 2) {
+    const [a, b] = [...orbit.ptrs.values()], dd = Math.hypot(a[0] - b[0], a[1] - b[1]);
+    if (orbit.pinch) orbit.r = Math.max(0.1, Math.min(30, orbit.r * orbit.pinch / dd));
+    orbit.pinch = dd;
+  }
+  camOrbit();
+});
+const endPtr = e => { orbit.ptrs.delete(e.pointerId); if (orbit.ptrs.size < 2) orbit.pinch = null; };
+cvs.addEventListener('pointerup', endPtr); cvs.addEventListener('pointercancel', endPtr);
+cvs.addEventListener('wheel', e => { e.preventDefault(); orbit.r = Math.max(0.1, Math.min(30, orbit.r * Math.exp(e.deltaY * 0.001))); camOrbit(); }, { passive: false });
+
+/* ---------------- AR ----------------
+   Android (WebXR + ARCore): hit-test places the box on a real floor / bench
+   at 1:1; tap two spots to measure a machine. Elsewhere: live camera
+   behind the model, touch to orbit or "lock to room" with the gyro.
+   The design sheet stays live in both, so every change shows instantly. */
+const AR = { mode: null, session: null, hit: null, reticle: null, placed: false, scale: 'real', yaw: 0, measure: null, mPts: [], mLine: null, stream: null, gyro: null };
+let xrOK = null;
+(async () => { try { xrOK = !!(navigator.xr && await navigator.xr.isSessionSupported('immersive-ar')); } catch (e) { xrOK = false; } })();
+function say(t, sub) { const s = $('#status'); s.hidden = false; s.innerHTML = t + (sub ? `<small>${sub}</small>` : ''); }
+function arScaleApply() {
+  const d = dims(), big = Math.max(d.W, d.D, d.H) * M;
+  scaler.scale.setScalar(AR.scale === 'fit' ? 0.32 / big : 1);
+  world.rotation.set(0, AR.yaw, 0);
+  $$('#arScale button').forEach(b => b.setAttribute('aria-pressed', b.dataset.s === AR.scale));
+}
+function arUi(on, mode) {
+  document.body.classList.toggle('ar', on);
+  $('#btnAR').hidden = on; $('#btnExit').hidden = !on; $('#arTools').hidden = !on; $('#status').hidden = !on;
+  $$('[data-xr]').forEach(b => b.hidden = mode !== 'xr'); $$('[data-cam]').forEach(b => b.hidden = mode !== 'camera');
+  grid.visible = !on;
+  $('#camFeed').hidden = mode !== 'camera';
+}
+function makeReticle() {
+  const m = new THREE.Mesh(new THREE.RingGeometry(0.05, 0.065, 40).rotateX(-Math.PI / 2), MAT.reticle);
+  m.add(new THREE.Mesh(new THREE.CircleGeometry(0.008, 16).rotateX(-Math.PI / 2), MAT.reticle));
+  m.matrixAutoUpdate = false; m.visible = false; m.renderOrder = 10; return m;
+}
+async function startAR() {
+  if (!window.isSecureContext) { toast('The camera only works on https:// pages. Open this from GitHub Pages (or another https host) on your phone.', true); return; }
+  if (xrOK === null) { try { xrOK = !!(navigator.xr && await navigator.xr.isSessionSupported('immersive-ar')); } catch (e) { xrOK = false; } }
+  if (xrOK) { try { await startXR(); return; } catch (e) { console.warn('WebXR failed, using camera view', e); } }
+  try { await startCam(); } catch (e) { stopAR(); toast(/NotAllowed|Permission/i.test(e.name + e.message) ? 'Camera permission was refused - allow it in the browser settings.' : 'Could not start the camera: ' + e.message, true); }
+}
+async function startXR() {
+  const session = await navigator.xr.requestSession('immersive-ar', { requiredFeatures: ['hit-test'], optionalFeatures: ['dom-overlay'], domOverlay: { root: $('#app') } });
+  AR.mode = 'xr'; AR.session = session; AR.placed = false; AR.scale = 'real'; AR.yaw = 0; AR.measure = null;
+  arUi(true, 'xr');
+  await renderer.xr.setSession(session);
+  const viewer = await session.requestReferenceSpace('viewer');
+  AR.hit = await session.requestHitTestSource({ space: viewer });
+  AR.reticle = makeReticle(); scene.add(AR.reticle);
+  world.visible = false; arScaleApply();
+  $('#sheet').classList.add('min');
+  session.addEventListener('select', onSelect);
+  session.addEventListener('end', () => stopAR(true));
+  say('Move the phone slowly over the floor or bench', 'When the green ring appears, tap to place the enclosure.');
+}
+function onSelect() {
+  if (!AR.reticle || !AR.reticle.visible) return;
+  const p = V3(0, 0, 0).setFromMatrixPosition(AR.reticle.matrix);
+  if (AR.measure) {
+    AR.mPts.push(p); markPoint(p);
+    if (AR.mPts.length === 1) { say(`Now tap the other side of the machine (${AR.measure === 'W' ? 'width' : 'depth'})`); return; }
+    const dist = AR.mPts[0].distanceTo(AR.mPts[1]) * 1000, k = AR.measure;
+    P[k] = Math.round(dist + 2 * (+P.clear) + 2 * (+P.t)); clampDims();
+    say(`Measured ${Math.round(dist)} mm → ${k === 'W' ? 'width' : 'depth'} set to ${P[k]} mm`, `Includes ${P.clear} mm clearance each side.`);
+    AR.measure = null; setTimeout(clearMarks, 2500); build();
+    $('#arMeasW').setAttribute('aria-pressed', false); $('#arMeasD').setAttribute('aria-pressed', false);
+    return;
+  }
+  const c = V3(0, 0, 0).setFromMatrixPosition(renderer.xr.getCamera(cam).matrixWorld);
+  world.position.copy(p);
+  if (!AR.placed) AR.yaw = Math.atan2(c.x - p.x, c.z - p.z);
+  AR.placed = true; world.visible = true; arScaleApply();
+  say('Placed. Change the size, hinge and parts below - it updates live.', 'Tap the floor to move it. Measure W / D sizes it round a real machine.');
+}
+function markPoint(p) {
+  const s = new THREE.Mesh(new THREE.SphereGeometry(0.012, 12, 8), MAT.mpt); s.position.copy(p); s.renderOrder = 11; scene.add(s); AR.mPts[AR.mPts.length - 1].mesh = s;
+  if (AR.mPts.length === 2) { const g = new THREE.BufferGeometry().setFromPoints(AR.mPts); AR.mLine = new THREE.Line(g, new THREE.LineBasicMaterial({ color: 0x00cdff, depthTest: false })); AR.mLine.renderOrder = 11; scene.add(AR.mLine); }
+}
+function clearMarks() { for (const p of AR.mPts) if (p.mesh) scene.remove(p.mesh); if (AR.mLine) { scene.remove(AR.mLine); AR.mLine.geometry.dispose(); AR.mLine = null; } AR.mPts = []; }
+function startMeasure(k) {
+  if (AR.mode !== 'xr') return;
+  clearMarks(); AR.measure = AR.measure === k ? null : k;
+  $('#arMeasW').setAttribute('aria-pressed', AR.measure === 'W'); $('#arMeasD').setAttribute('aria-pressed', AR.measure === 'D');
+  if (AR.measure) say(`Tap one side of the machine at floor level (${k === 'W' ? 'width' : 'depth'})`, 'Then tap the opposite side.');
+  else say('Measuring cancelled.');
+}
+async function startCam() {
+  const v = $('#camFeed');
+  AR.stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
+  v.srcObject = AR.stream; try { await v.play(); } catch (e) { /* will start */ }
+  AR.mode = 'camera'; AR.scale = 'fit'; AR.yaw = 0;
+  arUi(true, 'camera'); arScaleApply(); world.position.set(0, 0, 0); fitView();
+  say('Drag to orbit, pinch to zoom. Adjust the design below.', 'Tap "Lock to room" to hold it in place while you move the phone.');
+}
+// gyro (3 DoF) for the camera mode
+const zee = V3(0, 0, 1), gE = new THREE.Euler(), gQ0 = new THREE.Quaternion(), gQ1 = new THREE.Quaternion(-Math.sqrt(0.5), 0, 0, Math.sqrt(0.5));
+function onOri(e) { if (AR.gyro && e.alpha !== null) AR.gyro.o = [e.alpha, e.beta, e.gamma]; }
+function gyroFrame() {
+  const G = AR.gyro; if (!G || !G.o) return;
+  const r = Math.PI / 180, so = ((screen.orientation && screen.orientation.angle) || window.orientation || 0) * r;
+  gE.set(G.o[1] * r, G.o[0] * r, -G.o[2] * r, 'YXZ');
+  cam.quaternion.setFromEuler(gE); cam.quaternion.multiply(gQ1); cam.quaternion.multiply(gQ0.setFromAxisAngle(zee, -so));
+  cam.position.set(0, 0, 0);
+  if (!G.placed) {
+    const f = V3(0, 0, -1).applyQuaternion(cam.quaternion); f.y = 0; if (f.lengthSq() < 1e-6) f.set(0, 0, -1); f.normalize();
+    const d = dims(), R = Math.max(d.W, d.D, d.H) * M * scaler.scale.x, dist = Math.max(0.6, R * 2.4);
+    world.position.set(f.x * dist, -Math.max(0.4, R * 0.9), f.z * dist); AR.yaw = Math.atan2(-f.x, -f.z); arScaleApply();
+    cam.near = 0.01; cam.far = 100; cam.updateProjectionMatrix(); G.placed = true;
+  }
+}
+async function toggleGyro() {
+  const on = !AR.gyro;
+  if (on) {
+    try { if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function' && await DeviceOrientationEvent.requestPermission() !== 'granted') { say('Motion access was refused - staying on touch control.'); return; } }
+    catch (e) { say('Motion sensors are not available here.'); return; }
+    AR.gyro = { o: null, placed: false }; window.addEventListener('deviceorientation', onOri);
+    say('Locked to the room - walk around and look at it.', 'Turn with ⟳. Changes below update live.');
+    setTimeout(() => { if (AR.gyro && !AR.gyro.o) say('No motion sensor found on this device.'); }, 1500);
+  } else { window.removeEventListener('deviceorientation', onOri); AR.gyro = null; world.position.set(0, 0, 0); arScaleApply(); fitView(); say('Drag to orbit, pinch to zoom.'); }
+  $('#arGyro').setAttribute('aria-pressed', !!AR.gyro); $('#arGyro').textContent = AR.gyro ? 'Touch control' : 'Lock to room';
+}
+function stopAR(fromEnd) {
+  if (AR.session && !fromEnd) { AR.session.end().catch(() => stopAR(true)); return; }
+  AR.session = null;
+  if (AR.hit) { try { AR.hit.cancel(); } catch (e) { /* gone */ } AR.hit = null; }
+  if (AR.reticle) { scene.remove(AR.reticle); AR.reticle = null; }
+  clearMarks(); AR.measure = null;
+  if (AR.stream) { AR.stream.getTracks().forEach(t => t.stop()); AR.stream = null; $('#camFeed').srcObject = null; }
+  if (AR.gyro) { window.removeEventListener('deviceorientation', onOri); AR.gyro = null; $('#arGyro').setAttribute('aria-pressed', false); $('#arGyro').textContent = 'Lock to room'; }
+  AR.mode = null; world.visible = true; world.position.set(0, 0, 0); world.rotation.set(0, 0, 0); scaler.scale.setScalar(1);
+  arUi(false, null); resize(); fitView();
+}
+function photo() {
+  const src = renderer.domElement, W = src.width, H = src.height, c = document.createElement('canvas'); c.width = W; c.height = H;
+  const x = c.getContext('2d'), v = $('#camFeed');
+  if (AR.mode === 'camera' && v.videoWidth) { const k = Math.max(W / v.videoWidth, H / v.videoHeight); x.drawImage(v, (W - v.videoWidth * k) / 2, (H - v.videoHeight * k) / 2, v.videoWidth * k, v.videoHeight * k); }
+  else { x.fillStyle = '#01070b'; x.fillRect(0, 0, W, H); }
+  renderer.render(scene, cam); x.drawImage(src, 0, 0);
+  const u = Math.max(1, Math.min(W, H) / 640), pad = 14 * u, d = dims();
+  const l1 = 'Safety enclosure', l2 = `${d.W} × ${d.D} × ${d.H} mm · ${d.t} mm acrylic · ${P.open === 'door' ? 'door' : 'lid'} hinged ${P.edge}`;
+  x.font = `700 ${16 * u}px Lato, Arial, sans-serif`; const w1 = x.measureText(l1).width; x.font = `400 ${12 * u}px Lato, Arial, sans-serif`; const w2 = x.measureText(l2).width;
+  const bw = Math.max(w1, w2) + 2 * pad, bh = 2 * pad + 36 * u;
+  x.fillStyle = 'rgba(1,7,11,.8)'; x.fillRect(pad, H - bh - pad, bw, bh); x.fillStyle = '#63E079'; x.fillRect(pad, H - bh - pad, 3 * u, bh);
+  x.textBaseline = 'top'; x.fillStyle = '#fff'; x.font = `700 ${16 * u}px Lato, Arial, sans-serif`; x.fillText(l1, 2 * pad, H - bh);
+  x.fillStyle = '#C8D3D8'; x.font = `400 ${12 * u}px Lato, Arial, sans-serif`; x.fillText(l2, 2 * pad, H - bh + 21 * u);
+  const fl = $('#flash'); fl.classList.add('on'); setTimeout(() => fl.classList.remove('on'), 60);
+  c.toBlob(b => b && download(`enclosure_AR_${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.png`, b), 'image/png');
+}
+$('#btnAR').addEventListener('click', startAR);
+$('#btnExit').addEventListener('click', () => stopAR());
+$('#arPlace').addEventListener('click', () => { AR.measure = null; clearMarks(); say('Tap the floor where it should go.'); });
+$('#arMeasW').addEventListener('click', () => startMeasure('W'));
+$('#arMeasD').addEventListener('click', () => startMeasure('D'));
+$('#arScale').addEventListener('click', e => { const b = e.target.closest('[data-s]'); if (!b) return; AR.scale = b.dataset.s; arScaleApply(); if (AR.mode === 'camera' && !AR.gyro) fitView(); if (AR.gyro) AR.gyro.placed = false; });
+$('#arTurn').addEventListener('click', () => { AR.yaw -= Math.PI / 12; arScaleApply(); });
+$('#arGyro').addEventListener('click', toggleGyro);
+$('#arShot').addEventListener('click', photo);
+// taps on the controls must not place / measure in WebXR
+for (const el of ['#sheet', '.top', '#arTools', '#status']) $(el).addEventListener('beforexrselect', e => e.preventDefault());
+
+/* ---------------- loop ---------------- */
+function resize() {
+  if (renderer.xr.isPresenting) return;
+  const w = window.innerWidth, h = window.innerHeight;
+  renderer.setSize(w, h, false); cam.aspect = w / h;
+  if (w >= 980) cam.setViewOffset(w, h, 190, 0, w, h); else cam.clearViewOffset();   // centre the model left of the side panel
+  cam.updateProjectionMatrix();
+}
+window.addEventListener('resize', () => { resize(); if (!AR.gyro) camOrbit(); });
+let last = performance.now();
+renderer.setAnimationLoop((t, frame) => {
+  const dt = Math.min(0.1, (t - last) / 1000); last = t;
+  if (animTo !== null) { const k = Math.min(1, dt * 4), nx = angle + (animTo - angle) * k; angle = Math.abs(animTo - nx) < 0.3 ? animTo : nx; if (angle === animTo) animTo = null; applyAngle(); }
+  if (frame && AR.hit) {
+    const hits = frame.getHitTestResults(AR.hit);
+    if (hits.length) { AR.reticle.visible = true; AR.reticle.matrix.fromArray(hits[0].getPose(renderer.xr.getReferenceSpace()).transform.matrix); }
+    else AR.reticle.visible = false;
+    if (!AR.placed && !AR.measure) say(hits.length ? 'Tap to place the enclosure here' : 'Move the phone slowly over the floor or bench', 'Real size (1:1). Use Tabletop for a small preview.');
+  }
+  if (AR.gyro) gyroFrame();
+  renderer.render(scene, cam);
+});
+
+if (window.innerWidth < 980) $('#sheet').classList.add('min');
+clampDims(); resize(); build(); fitView();
+if (fromLink) toast('Design opened from the link');
+})();
+</script>
+</body>
+</html>
