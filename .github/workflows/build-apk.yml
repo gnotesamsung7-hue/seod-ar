@@ -17,7 +17,7 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - uses: android-actions/setup-android@v3
+      # Android SDK is already installed on GitHub's ubuntu runners (ANDROID_HOME)
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.7'
@@ -35,5 +35,6 @@ jobs:
         with:
           tag_name: apk-${{ github.run_number }}
           name: SEOD AR app ${{ github.run_number }}
+          body: Install SEOD-AR.apk on the phone (allow "install unknown apps" when asked).
           files: SEOD-AR.apk
           make_latest: true
