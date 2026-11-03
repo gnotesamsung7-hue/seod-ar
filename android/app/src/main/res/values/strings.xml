@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">SEOD AR</string>
+    <!-- GitHub Pages address of index.html - change this if the repo name is different -->
+    <string name="app_url">https://gnotesamsung7-hue.github.io/seod-ar/</string>
+</resources>
