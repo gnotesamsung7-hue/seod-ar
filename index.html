@@ -203,12 +203,16 @@ td:not(:first-child),th:not(:first-child){text-align:right}
         <h3>Hardware</h3>
         <table id="hwTable"></table>
         <div class="btnrow" style="margin-top:14px">
-          <button class="btn primary" id="dlSvg">Laser SVG</button>
+          <button class="btn primary" id="dlStep">STEP 3D (SolidWorks)</button>
+          <button class="btn" id="dlSvg">Laser SVG</button>
+          <button class="btn" id="dlDxf">DXF panels</button>
+          <button class="btn" id="dlStl">3D STL</button>
           <button class="btn" id="dlJson">Save design</button>
           <button class="btn" id="ldJson">Open design</button>
           <button class="btn" id="btnReset">Reset</button>
         </div>
-        <p class="hint">SVG is 1:1 in mm. Red = cut, blue = engrave (panel names). Hinge and handle holes are M4 clearance (Ø4.5).</p>
+        <p class="hint">SVG and DXF are 1:1 in mm. Hinge and handle holes are M4 clearance (Ø4.5). The DXF puts each panel on its own layer (PANEL_BACK, PANEL_LID…), so you can import one panel at a time and extrude it to the acrylic thickness. The STL is the whole box, closed, in mm, for checking fit in an assembly.</p>
+        <p class="hint"><b>STEP 3D</b> is the one for SolidWorks 2025: real solids (flat faces, round holes) as an assembly with one part per panel, hinge, post, handle and switch, already in place. Open it in SolidWorks, then Save As .SLDASM - the parts save as .SLDPRT.</p>
         <input type="file" id="fileJson" accept=".json,application/json" hidden>
       </div>
     </div>
@@ -376,13 +380,13 @@ function hingeFrame() {
 }
 
 /* ---------------- build the 3D model ---------------- */
-let movingGroup = null, holes3d = [], panelMats = {};
+let movingGroup = null, holes3d = [], panelMats = {}, hw3d = [];
 function build() {
   scaler.remove(box); box.traverse(o => { if (o.geometry) o.geometry.dispose(); });
   box = new THREE.Group(); scaler.add(box);
   MAT.acr.color.setHex(TINT[P.tint] || TINT.clear); MAT.acr.opacity = P.tint === 'clear' ? 0.22 : 0.34;
   const d = dims(), hf = hingeFrame();
-  holes3d = []; panelMats = {};
+  holes3d = []; panelMats = {}; hw3d = [];
   const mm = (v) => v.clone().multiplyScalar(M);
   const pivotM = mm(hf.pivot);
   movingGroup = new THREE.Group(); movingGroup.position.copy(pivotM); box.add(movingGroup);
@@ -395,11 +399,15 @@ function build() {
     const margin = Math.min(60, hf.len * 0.12), u = hf.a0 + margin + (hf.len - 2 * margin) * (i / Math.max(1, +P.hinges - 1));
     hingeAt.push(hf.pivot.clone().add(hf.axis.clone().multiplyScalar(u)));   // lid: pivot = edge centre (a0 = -len/2); door: pivot = bottom (a0 = 0)
   }
-  hingeAt.forEach((c) => {
+  hingeAt.forEach((c, hi) => {
     const barrel = cylAlong(mm(c), hf.axis, r * M, leafL * M, MAT.metal); box.add(barrel);
+    const hn = `Hinge ${hi + 1}`;
+    hw3d.push({ part: hn, kind: 'cyl', c: c.clone(), axis: hf.axis.clone(), r, len: leafL, col: 'metal' });
     const fc = c.clone().add(hf.fDir.clone().multiplyScalar(r + leafD / 2)).add(hf.fN.clone().multiplyScalar(leafT / 2));
     const mc = c.clone().add(hf.mDir.clone().multiplyScalar(r + leafD / 2)).add(hf.mN.clone().multiplyScalar(leafT / 2));
     box.add(orientedBox(mm(fc), hf.axis, hf.fDir, hf.fN, leafL * M, leafD * M, leafT * M, MAT.metal));
+    hw3d.push({ part: hn, kind: 'box', c: fc, ax: hf.axis.clone(), dir: hf.fDir.clone(), la: leafL, ld: leafD, ln: leafT, col: 'metal' });
+    hw3d.push({ part: hn, kind: 'box', c: mc, ax: hf.axis.clone(), dir: hf.mDir.clone(), la: leafL, ld: leafD, ln: leafT, col: 'metal' });
     addTo(orientedBox(mm(mc), hf.axis, hf.mDir, hf.mN, leafL * M, leafD * M, leafT * M, MAT.metal), true);
     for (const k of [-12, 12]) {
       holes3d.push(c.clone().add(hf.axis.clone().multiplyScalar(k)).add(hf.fDir.clone().multiplyScalar(r + leafD / 2)));
@@ -413,15 +421,19 @@ function build() {
     const bl = Math.min(140, hf.len * 0.45), h = 32;
     const bar = far.clone().add(hf.mN.clone().multiplyScalar(h));
     addTo(orientedBox(mm(bar), hf.axis, hf.mDir, hf.mN, bl * M, 12 * M, 10 * M, MAT.dark), true);
+    hw3d.push({ part: 'Handle', kind: 'box', c: bar.clone(), ax: hf.axis.clone(), dir: hf.mDir.clone(), la: bl, ld: 12, ln: 10, col: 'dark' });
     for (const k of [-(bl / 2 - 7), bl / 2 - 7]) {
       const sc = far.clone().add(hf.axis.clone().multiplyScalar(k)).add(hf.mN.clone().multiplyScalar(h / 2));
       addTo(orientedBox(mm(sc), hf.axis, hf.mDir, hf.mN, 10 * M, 10 * M, h * M, MAT.dark), true);
+      hw3d.push({ part: 'Handle', kind: 'box', c: sc.clone(), ax: hf.axis.clone(), dir: hf.mDir.clone(), la: 10, ld: 10, ln: h - 10, col: 'dark' });
       holes3d.push(far.clone().add(hf.axis.clone().multiplyScalar(k)));
     }
   }
   if (P.interlock) {
     const sw = far.clone().add(hf.mDir.clone().multiplyScalar(20)).sub(hf.mN.clone().multiplyScalar(d.t + 14)).add(hf.axis.clone().multiplyScalar(Math.min(120, hf.len * 0.3)));
     box.add(orientedBox(mm(sw), hf.axis, hf.mDir, hf.mN, 30 * M, 16 * M, 24 * M, MAT.dark));
+    hw3d.push({ part: 'Interlock switch', kind: 'box', c: sw.clone(), ax: hf.axis.clone(), dir: hf.mDir.clone(), la: 30, ld: 16, ln: 24, col: 'dark' });
+    hw3d.push({ part: 'Interlock switch', kind: 'box', c: sw.clone().add(hf.mN.clone().multiplyScalar(14.5)), ax: hf.axis.clone(), dir: hf.mDir.clone(), la: 5, ld: 5, ln: 5, col: 'red' });
     box.add(orientedBox(mm(sw.clone().add(hf.mN.clone().multiplyScalar(14))), hf.axis, hf.mDir, hf.mN, 5 * M, 5 * M, 5 * M, MAT.red));
   }
   // corner posts
@@ -430,6 +442,7 @@ function build() {
     for (const [sx, sz] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
       const m = new THREE.Mesh(new THREE.BoxGeometry(s * M, d.Hw * M, s * M), MAT.post);
       m.position.set(sx * x * M, (d.yb + d.Hw / 2) * M, sz * z * M); box.add(m);
+      hw3d.push({ part: 'Corner post ' + (hw3d.filter(q => q.part.startsWith('Corner')).length + 1), kind: 'box', c: V3(sx * x, d.yb + d.Hw / 2, sz * z), ax: V3(1, 0, 0), dir: V3(0, 1, 0), la: s, ld: d.Hw, ln: s, col: 'post' });
     }
   }
   // panels (holes from hardware projected into each panel)
@@ -560,6 +573,232 @@ function svgFile() {
 <g id="ENGRAVE">${out.filter(s => s.startsWith('<text')).join('\n')}</g>
 </svg>`;
 }
+
+/* ---------------- DXF (R12, mm) and STL (binary, mm) for CAD ---------------- */
+function dxfFile() {
+  const pl = panelList(), gap = 20, maxW = 1400, L = [];
+  const n = (v) => (+v).toFixed(4);
+  const ent = (type, layer, codes) => { L.push('0', type, '8', layer); for (const [c, v] of codes) L.push(String(c), String(v)); };
+  const line = (ly, x1, y1, x2, y2) => ent('LINE', ly, [[10, n(x1)], [20, n(y1)], [30, 0], [11, n(x2)], [21, n(y2)], [31, 0]]);
+  const arc = (ly, cx, cy, r, a0, a1) => ent('ARC', ly, [[10, n(cx)], [20, n(cy)], [30, 0], [40, n(r)], [50, n(a0)], [51, n(a1)]]);
+  const circle = (ly, cx, cy, r) => ent('CIRCLE', ly, [[10, n(cx)], [20, n(cy)], [30, 0], [40, n(r)]]);
+  const layers = [];
+  let x = 0, y = 0, rowH = 0;
+  for (const p of pl) {
+    const pm = panelMats[p.id] || p, ly = 'PANEL_' + p.id.toUpperCase(); layers.push(ly);
+    if (x + p.w > maxW && x > 0) { x = 0; y -= rowH + gap; rowH = 0; }
+    const oy = y - p.h, ox = x;                      // panel sits with its bottom-left at (ox, oy)
+    const P2 = (px, py) => [ox + px, oy + py];
+    let pts;
+    if (pm.f.notch) { const a = (p.w - pm.f.notch.w) / 2, b = a + pm.f.notch.w, h = pm.f.notch.h; pts = [[0, 0], [a, 0], [a, h], [b, h], [b, 0], [p.w, 0], [p.w, p.h], [0, p.h]]; }
+    else pts = [[0, 0], [p.w, 0], [p.w, p.h], [0, p.h]];
+    for (let i = 0; i < pts.length; i++) { const a = P2(...pts[i]), b = P2(...pts[(i + 1) % pts.length]); line(ly, a[0], a[1], b[0], b[1]); }
+    for (const sl of pm.f.slots || []) {
+      const r = sl.w / 2, cx = ox + sl.x + r, yb = oy + sl.y + r, yt = oy + sl.y + sl.h - r;
+      arc(ly, cx, yb, r, 180, 360); arc(ly, cx, yt, r, 0, 180);
+      line(ly, cx - r, yb, cx - r, yt); line(ly, cx + r, yb, cx + r, yt);
+    }
+    for (const h of pm.f.holes || []) circle(ly, ox + h.x, oy + h.y, h.d / 2);
+    ent('TEXT', 'NOTES', [[10, n(ox + 4)], [20, n(oy + p.h + 4)], [30, 0], [40, 8], [1, `${p.name.toUpperCase()} ${Math.round(p.w)}x${Math.round(p.h)}x${P.t} mm`]]);
+    x += p.w + gap; rowH = Math.max(rowH, p.h);
+  }
+  const hdr = ['0', 'SECTION', '2', 'HEADER', '9', '$ACADVER', '1', 'AC1009', '9', '$INSUNITS', '70', '4', '0', 'ENDSEC',
+    '0', 'SECTION', '2', 'TABLES', '0', 'TABLE', '2', 'LAYER', '70', String(layers.length + 1)];
+  [...layers, 'NOTES'].forEach((ly, i) => hdr.push('0', 'LAYER', '2', ly, '70', '0', '62', String(ly === 'NOTES' ? 5 : (i % 6) + 1), '6', 'CONTINUOUS'));
+  hdr.push('0', 'ENDTAB', '0', 'ENDSEC', '0', 'SECTION', '2', 'ENTITIES');
+  return hdr.concat(L, ['0', 'ENDSEC', '0', 'EOF']).join('\r\n');
+}
+function stlFile() {
+  const keep = angle; angle = 0; applyAngle(); scaler.updateMatrixWorld(true);
+  const inv = scaler.matrixWorld.clone().invert(), tris = [], v = [V3(0,0,0), V3(0,0,0), V3(0,0,0)], mtx = new THREE.Matrix4();
+  box.traverse(o => {
+    if (!o.isMesh) return;
+    mtx.multiplyMatrices(inv, o.matrixWorld);
+    const g = o.geometry, pos = g.attributes.position, idx = g.index, cnt = idx ? idx.count : pos.count;
+    for (let i = 0; i < cnt; i += 3) {
+      for (let k = 0; k < 3; k++) { const j = idx ? idx.getX(i + k) : i + k; v[k].fromBufferAttribute(pos, j).applyMatrix4(mtx).multiplyScalar(1000); }
+      tris.push(v[0].x, v[0].y, v[0].z, v[1].x, v[1].y, v[1].z, v[2].x, v[2].y, v[2].z);
+    }
+  });
+  angle = keep; applyAngle();
+  const nT = tris.length / 9, buf = new ArrayBuffer(84 + nT * 50), dv = new DataView(buf);
+  const head = `SEOD AR enclosure ${P.W}x${P.D}x${P.H} mm`;
+  for (let i = 0; i < 80; i++) dv.setUint8(i, i < head.length ? head.charCodeAt(i) : 32);
+  dv.setUint32(80, nT, true);
+  const a = V3(0,0,0), b = V3(0,0,0), c = V3(0,0,0), nn = V3(0,0,0);
+  for (let t = 0; t < nT; t++) {
+    const o = 84 + t * 50, q = t * 9;
+    a.set(tris[q], tris[q + 1], tris[q + 2]); b.set(tris[q + 3], tris[q + 4], tris[q + 5]); c.set(tris[q + 6], tris[q + 7], tris[q + 8]);
+    nn.subVectors(c, b).cross(a.clone().sub(b)).normalize();
+    const vals = [nn.x, nn.y, nn.z, a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z];
+    vals.forEach((val, k) => dv.setFloat32(o + k * 4, isFinite(val) ? val : 0, true));
+    dv.setUint16(o + 48, 0, true);
+  }
+  return new Blob([buf], { type: 'model/stl' });
+}
+
+/* ---------------- STEP AP214 (true B-rep solids, mm) ----------------
+   Every body is a straight extrusion of a 2D profile: outer loop CCW, holes CW,
+   made of lines and arcs (circles are split into two arcs, so no seam edges).
+   Planes for straight sides, cylinders for holes/slots/barrels. Written as an
+   assembly: one part per panel / hardware item, placed in final position. */
+function stepFile() {
+  const ent = [], add = (t) => { ent.push(t); return '#' + ent.length; };
+  const f = (v) => { const x = Math.abs(v) < 1e-9 ? 0 : v; let t = x.toFixed(6); return t; };
+  const pt = (p) => add(`CARTESIAN_POINT('',(${f(p.x)},${f(p.y)},${f(p.z)}))`);
+  const dir = (v) => add(`DIRECTION('',(${f(v.x)},${f(v.y)},${f(v.z)}))`);
+  const ax2 = (o, z, x) => add(`AXIS2_PLACEMENT_3D('',${pt(o)},${dir(z)},${dir(x)})`);
+  const q = (s) => String(s).replace(/'/g, '');
+  // ---- context
+  const appCtx = add(`APPLICATION_CONTEXT('automotive design')`);
+  add(`APPLICATION_PROTOCOL_DEFINITION('international standard','automotive_design',2000,${appCtx})`);
+  const prodCtx = add(`PRODUCT_CONTEXT('',${appCtx},'mechanical')`);
+  const pdCtx = add(`PRODUCT_DEFINITION_CONTEXT('part definition',${appCtx},'design')`);
+  const lu = add(`(LENGTH_UNIT()NAMED_UNIT(*)SI_UNIT(.MILLI.,.METRE.))`);
+  const au = add(`(NAMED_UNIT(*)PLANE_ANGLE_UNIT()SI_UNIT($,.RADIAN.))`);
+  const su = add(`(NAMED_UNIT(*)SI_UNIT($,.STERADIAN.)SOLID_ANGLE_UNIT())`);
+  const unc = add(`UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(1.E-05),${lu},'distance_accuracy_value','confusion accuracy')`);
+  const gctx = add(`(GEOMETRIC_REPRESENTATION_CONTEXT(3)GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT((${unc}))GLOBAL_UNIT_ASSIGNED_CONTEXT((${lu},${au},${su}))REPRESENTATION_CONTEXT('Context #1','3D Context with UNIT and UNCERTAINTY'))`);
+  const product = (name) => {
+    const pr = add(`PRODUCT('${q(name)}','${q(name)}','',(${prodCtx}))`);
+    add(`PRODUCT_RELATED_PRODUCT_CATEGORY('part',$,(${pr}))`);
+    const pdf = add(`PRODUCT_DEFINITION_FORMATION('','',${pr})`);
+    const pd = add(`PRODUCT_DEFINITION('design','',${pdf},${pdCtx})`);
+    const pds = add(`PRODUCT_DEFINITION_SHAPE('','',${pd})`);
+    return { pd, pds };
+  };
+  const COL = { acr: [0.72, 0.88, 0.96], amber: [1, 0.6, 0.18], smoke: [0.36, 0.41, 0.44], blue: [0.35, 0.75, 1], post: [1, 0.55, 0.16], metal: [0.62, 0.65, 0.68], dark: [0.12, 0.13, 0.14], red: [0.9, 0.28, 0.3] };
+  const styled = [];
+  // ---- one extruded solid
+  // loops: [outer, ...holes]; segment {a:[x,y], c?:[cx,cy], ccw?:bool} (arc if c present); frame {O, ex, ey, ez}; depth
+  function solid(name, loops, F, depth, col) {
+    const W = (x, y, z) => F.O.clone().add(F.ex.clone().multiplyScalar(x)).add(F.ey.clone().multiplyScalar(y)).add(F.ez.clone().multiplyScalar(z));
+    const Wd = (x, y) => F.ex.clone().multiplyScalar(x).add(F.ey.clone().multiplyScalar(y)).normalize();
+    const faces = [], bottomBounds = [], topBounds = [];
+    loops.forEach((loop, li) => {
+      const n = loop.length, v0 = [], v1 = [], e0 = [], e1 = [], vv = [];
+      for (let i = 0; i < n; i++) {
+        v0.push(add(`VERTEX_POINT('',${pt(W(loop[i].a[0], loop[i].a[1], 0))})`));
+        v1.push(add(`VERTEX_POINT('',${pt(W(loop[i].a[0], loop[i].a[1], depth))})`));
+      }
+      for (let i = 0; i < n; i++) {   // vertical edges
+        const p = W(loop[i].a[0], loop[i].a[1], 0);
+        const ln = add(`LINE('',${pt(p)},${add(`VECTOR('',${dir(F.ez)},${f(depth)})`)})`);
+        vv.push(add(`EDGE_CURVE('',${v0[i]},${v1[i]},${ln},.T.)`));
+      }
+      for (let i = 0; i < n; i++) {   // bottom / top edges
+        const sg = loop[i], nx = loop[(i + 1) % n], j = (i + 1) % n;
+        for (const [z, vs, arr] of [[0, v0, e0], [depth, v1, e1]]) {
+          let curve, sense = '.T.';
+          if (sg.c) {
+            const ctr = W(sg.c[0], sg.c[1], z), r = Math.hypot(sg.a[0] - sg.c[0], sg.a[1] - sg.c[1]);
+            curve = add(`CIRCLE('',${ax2(ctr, F.ez, Wd(sg.a[0] - sg.c[0], sg.a[1] - sg.c[1]))},${f(r)})`);
+            sense = sg.ccw ? '.T.' : '.F.';
+          } else {
+            const pa = W(sg.a[0], sg.a[1], z), pb = W(nx.a[0], nx.a[1], z), L = pb.distanceTo(pa);
+            curve = add(`LINE('',${pt(pa)},${add(`VECTOR('',${dir(pb.clone().sub(pa).normalize())},${f(L)})`)})`);
+          }
+          arr.push(add(`EDGE_CURVE('',${vs[i]},${vs[j]},${curve},${sense})`));
+        }
+      }
+      // side faces
+      for (let i = 0; i < n; i++) {
+        const sg = loop[i], nx = loop[(i + 1) % n], j = (i + 1) % n;
+        const el = add(`EDGE_LOOP('',(${add(`ORIENTED_EDGE('',*,*,${e0[i]},.T.)`)},${add(`ORIENTED_EDGE('',*,*,${vv[j]},.T.)`)},${add(`ORIENTED_EDGE('',*,*,${e1[i]},.F.)`)},${add(`ORIENTED_EDGE('',*,*,${vv[i]},.F.)`)}))`);
+        let surf, same = '.T.';
+        if (sg.c) {
+          const r = Math.hypot(sg.a[0] - sg.c[0], sg.a[1] - sg.c[1]);
+          surf = add(`CYLINDRICAL_SURFACE('',${ax2(W(sg.c[0], sg.c[1], 0), F.ez, Wd(sg.a[0] - sg.c[0], sg.a[1] - sg.c[1]))},${f(r)})`);
+          same = sg.ccw ? '.T.' : '.F.';
+        } else {
+          const tx = nx.a[0] - sg.a[0], ty = nx.a[1] - sg.a[1], tl = Math.hypot(tx, ty);
+          surf = add(`PLANE('',${ax2(W(sg.a[0], sg.a[1], 0), Wd(ty / tl, -tx / tl), Wd(tx / tl, ty / tl))})`);
+        }
+        faces.push(add(`ADVANCED_FACE('',(${add(`FACE_OUTER_BOUND('',${el},.T.)`)}),${surf},${same})`));
+      }
+      const oe = (arr) => arr.map(e => add(`ORIENTED_EDGE('',*,*,${e},.T.)`)).join(',');
+      const b = add(`EDGE_LOOP('',(${oe(e0)}))`), t = add(`EDGE_LOOP('',(${oe(e1)}))`);
+      bottomBounds.push(add(`${li === 0 ? 'FACE_OUTER_BOUND' : 'FACE_BOUND'}('',${b},.F.)`));
+      topBounds.push(add(`${li === 0 ? 'FACE_OUTER_BOUND' : 'FACE_BOUND'}('',${t},.T.)`));
+    });
+    const nz = F.ez.clone().negate();
+    faces.push(add(`ADVANCED_FACE('',(${bottomBounds.join(',')}),${add(`PLANE('',${ax2(F.O, nz, F.ex)})`)},.T.)`));
+    faces.push(add(`ADVANCED_FACE('',(${topBounds.join(',')}),${add(`PLANE('',${ax2(W(0, 0, depth), F.ez, F.ex)})`)},.T.)`));
+    const brep = add(`MANIFOLD_SOLID_BREP('${q(name)}',${add(`CLOSED_SHELL('',(${faces.join(',')}))`)})`);
+    const c = COL[col] || COL.metal;
+    const rgb = add(`COLOUR_RGB('',${f(c[0])},${f(c[1])},${f(c[2])})`);
+    const style = add(`PRESENTATION_STYLE_ASSIGNMENT((${add(`SURFACE_STYLE_USAGE(.BOTH.,${add(`SURFACE_SIDE_STYLE('',(${add(`SURFACE_STYLE_FILL_AREA(${add(`FILL_AREA_STYLE('',(${add(`FILL_AREA_STYLE_COLOUR('',${rgb})`)}))`)})`)}))`)})`)}))`);
+    styled.push(add(`STYLED_ITEM('color',(${style}),${brep})`));
+    return brep;
+  }
+  // ---- profiles
+  const rect = (w, h) => [{ a: [0, 0] }, { a: [w, 0] }, { a: [w, h] }, { a: [0, h] }];
+  const circCW = (cx, cy, r) => [{ a: [cx + r, cy], c: [cx, cy], ccw: false }, { a: [cx - r, cy], c: [cx, cy], ccw: false }];
+  const circCCW = (cx, cy, r) => [{ a: [cx + r, cy], c: [cx, cy], ccw: true }, { a: [cx - r, cy], c: [cx, cy], ccw: true }];
+  const slotCW = (sl) => { const r = sl.w / 2, cx = sl.x + r, yb = sl.y + r, yt = sl.y + sl.h - r;
+    return [{ a: [cx - r, yt], c: [cx, yt], ccw: false }, { a: [cx + r, yt] }, { a: [cx + r, yb], c: [cx, yb], ccw: false }, { a: [cx - r, yb] }]; };
+  const boxFrame = (h) => {   // centred box from a hw3d record
+    const ex = h.ax.clone().normalize(), ey = h.dir.clone().normalize(), ez = ex.clone().cross(ey).normalize();
+    return { O: h.c.clone().sub(ex.clone().multiplyScalar(h.la / 2)).sub(ey.clone().multiplyScalar(h.ld / 2)).sub(ez.clone().multiplyScalar(h.ln / 2)), ex, ey, ez };
+  };
+  // ---- parts
+  const d = dims(), parts = [];
+  for (const p of panelList()) {
+    const pm = panelMats[p.id] || p;
+    const q4 = new THREE.Quaternion().setFromEuler(new THREE.Euler(...p.rot));
+    const F = { O: p.pos.clone(), ex: V3(1, 0, 0).applyQuaternion(q4), ey: V3(0, 1, 0).applyQuaternion(q4), ez: V3(0, 0, 1).applyQuaternion(q4) };
+    let outer = rect(p.w, p.h);
+    if (pm.f.notch && pm.f.notch.w < p.w - 20 && pm.f.notch.h < p.h - 20) { const a = (p.w - pm.f.notch.w) / 2, b = a + pm.f.notch.w, h = pm.f.notch.h;
+      outer = [{ a: [0, 0] }, { a: [a, 0] }, { a: [a, h] }, { a: [b, h] }, { a: [b, 0] }, { a: [p.w, 0] }, { a: [p.w, p.h] }, { a: [0, p.h] }]; }
+    const loops = [outer, ...(pm.f.slots || []).map(slotCW), ...(pm.f.holes || []).map(h => circCW(h.x, h.y, h.d / 2))];
+    const tint = P.tint === 'clear' ? 'acr' : P.tint;
+    parts.push({ name: `${p.name} panel ${Math.round(p.w)}x${Math.round(p.h)}x${d.t}`, bodies: [() => solid(p.name, loops, F, d.t, tint)] });
+  }
+  const groups = {};
+  for (const h of hw3d) (groups[h.part] = groups[h.part] || []).push(h);
+  for (const [name, list] of Object.entries(groups)) {
+    parts.push({ name, bodies: list.map((h, i) => () => {
+      if (h.kind === 'cyl') {
+        const ez = h.axis.clone().normalize(), ex = Math.abs(ez.x) < 0.9 ? V3(1, 0, 0) : V3(0, 1, 0);
+        ex.sub(ez.clone().multiplyScalar(ex.dot(ez))).normalize();
+        const ey = ez.clone().cross(ex);
+        return solid(`${name} ${i + 1}`, [circCCW(0, 0, h.r)], { O: h.c.clone().sub(ez.clone().multiplyScalar(h.len / 2)), ex, ey, ez }, h.len, h.col);
+      }
+      return solid(`${name} ${i + 1}`, [rect(h.la, h.ld)], boxFrame(h), h.ln, h.col);
+    }) });
+  }
+  // ---- assembly structure
+  const asm = product(`Safety enclosure ${d.W}x${d.D}x${d.H}`);
+  const asmAx = ax2(V3(0, 0, 0), V3(0, 0, 1), V3(1, 0, 0));
+  const asmItems = [asmAx];
+  parts.forEach((pt_, k) => {
+    const pr = product(pt_.name);
+    const partAx = ax2(V3(0, 0, 0), V3(0, 0, 1), V3(1, 0, 0));
+    const breps = pt_.bodies.map(fn => fn());
+    const rep = add(`ADVANCED_BREP_SHAPE_REPRESENTATION('${q(pt_.name)}',(${[partAx, ...breps].join(',')}),${gctx})`);
+    add(`SHAPE_DEFINITION_REPRESENTATION(${pr.pds},${rep})`);
+    const nauo = add(`NEXT_ASSEMBLY_USAGE_OCCURRENCE('${k + 1}','${q(pt_.name)}','',${asm.pd},${pr.pd},$)`);
+    const pdsN = add(`PRODUCT_DEFINITION_SHAPE('','',${nauo})`);
+    const idt = add(`ITEM_DEFINED_TRANSFORMATION('','',${partAx},${asmAx})`);
+    pt_.rr = add(`(REPRESENTATION_RELATIONSHIP('','',${rep},ASMREP)REPRESENTATION_RELATIONSHIP_WITH_TRANSFORMATION(${idt})SHAPE_REPRESENTATION_RELATIONSHIP())`);
+    add(`CONTEXT_DEPENDENT_SHAPE_REPRESENTATION(${pt_.rr},${pdsN})`);
+  });
+  const asmRep = add(`SHAPE_REPRESENTATION('${q('Safety enclosure')}',(${asmItems.join(',')}),${gctx})`);
+  add(`SHAPE_DEFINITION_REPRESENTATION(${asm.pds},${asmRep})`);
+  add(`MECHANICAL_DESIGN_GEOMETRIC_PRESENTATION_REPRESENTATION('',(${styled.join(',')}),${gctx})`);
+  const now = new Date().toISOString().slice(0, 19);
+  const name = `enclosure_${d.W}x${d.D}x${d.H}.step`;
+  return ['ISO-10303-21;', 'HEADER;', `FILE_DESCRIPTION(('SEOD AR safety enclosure'),'2;1');`,
+    `FILE_NAME('${name}','${now}',('SEOD AR'),('XP Power'),'SEOD AR Wizard','SEOD AR Wizard','');`,
+    `FILE_SCHEMA(('AUTOMOTIVE_DESIGN { 1 0 10303 214 1 1 1 1 }'));`, 'ENDSEC;', 'DATA;',
+    ...ent.map((e, i) => `#${i + 1}=${e.replace(/ASMREP/g, asmRep)};`), 'ENDSEC;', 'END-ISO-10303-21;'].join('\n');
+}
+$('#dlStep').addEventListener('click', () => {
+  try { download(`enclosure_${P.W}x${P.D}x${P.H}.step`, stepFile(), 'application/step'); toast('STEP saved - open it in SolidWorks'); }
+  catch (e) { console.error(e); toast('STEP export failed: ' + e.message, true); }
+});
+$('#dlDxf').addEventListener('click', () => download(`enclosure_${P.W}x${P.D}x${P.H}_panels.dxf`, dxfFile(), 'application/dxf'));
+$('#dlStl').addEventListener('click', () => download(`enclosure_${P.W}x${P.D}x${P.H}.stl`, stlFile()));
 $('#dlSvg').addEventListener('click', () => download(`enclosure_${P.W}x${P.D}x${P.H}_laser.svg`, svgFile(), 'image/svg+xml'));
 $('#dlJson').addEventListener('click', () => download(`enclosure_${P.W}x${P.D}x${P.H}.json`, JSON.stringify({ app: 'SEOD AR', v: 1, design: P }, null, 2), 'application/json'));
 $('#ldJson').addEventListener('click', () => $('#fileJson').click());
