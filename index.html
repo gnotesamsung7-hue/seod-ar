@@ -138,6 +138,7 @@ td:not(:first-child),th:not(:first-child){text-align:right}
     <button class="btn" id="arMeasD" data-xr>Measure D</button>
     <div class="seg" style="margin:0" id="arScale"><button data-s="real">1:1</button><button data-s="fit">Tabletop</button></div>
     <button class="btn" id="arTurn" title="Turn 15°">⟳</button>
+    <button class="btn" id="arExplodeBtn">Explode</button>
     <button class="btn" id="arGyro" data-cam aria-pressed="false">Lock to room</button>
     <button class="btn" id="arShot" data-cam>Photo</button>
   </div>
@@ -185,6 +186,12 @@ td:not(:first-child),th:not(:first-child){text-align:right}
       <div class="pane" data-pane="parts" hidden>
         <h3>Frame and hardware</h3>
         <label class="check"><input type="checkbox" data-c="posts"> Corner posts (3D-printed, 15 mm)</label>
+        <label class="check"><input type="checkbox" data-c="screws"> Side screws: panels screwed to the posts</label>
+        <div data-screws>
+          <div class="row"><label for="sSM">Screw</label><select class="num" id="sSM" data-sel="screwM" style="grid-column:2 / span 2"><option value="3">M3 button head</option><option value="4">M4 button head</option><option value="5">M5 button head</option></select></div>
+          <div class="row"><label for="rSP">Max pitch</label><input type="range" id="rSP" data-k="screwPitch" min="40" max="300" step="5"><input class="num" data-n="screwPitch" inputmode="decimal"></div>
+          <p class="hint">Screws go along every fixed vertical edge into heat-set inserts in the posts, plus the base (and the top, when the front is the door). <b>Max pitch</b> is the largest gap between screws; 80–120 mm gives a stiff box.</p>
+        </div>
         <label class="check"><input type="checkbox" data-c="handle"> Handle on the opening edge</label>
         <label class="check"><input type="checkbox" data-c="interlock"> Safety interlock switch</label>
         <h3>Panel features</h3>
@@ -212,6 +219,9 @@ td:not(:first-child),th:not(:first-child){text-align:right}
       <!-- BUILD -->
       <div class="pane" data-pane="build" hidden>
         <div id="warns"></div>
+        <h3>Exploded view</h3>
+        <div class="row"><label for="rX">Explode</label><input type="range" id="rX" min="0" max="1" step="0.01" value="0"><output class="num" id="oX">0%</output></div>
+        <div class="btnrow"><button class="btn primary" id="btnExplode">Explode</button><button class="btn" id="dlExpPng">Exploded view sheet</button><button class="btn" id="dlStepX">STEP exploded</button></div>
         <h3>Laser cut list</h3>
         <table id="cutTable"></table>
         <h3>Hardware</h3>
@@ -263,6 +273,7 @@ const M = 0.001;                                  // mm -> m
 const LS = 'seod-ar.v1';
 const DEF = { W: 600, D: 450, H: 500, t: 5, tint: 'clear', base: false, clear: 30, open: 'lid', edge: 'back', hinges: 2, stop: 90,
   posts: true, handle: true, interlock: true, vents: false, notch: true, notchW: 80, notchH: 40,
+  screws: true, screwM: 4, screwPitch: 100,
   probe: false, probeSide: 'both', probeN: 4, probeRows: 1, probeD: 10, probeS: 30, probeY: 150, probeX: 0, probeGrommet: true };
 let P = Object.assign({}, DEF);
 try { const s = JSON.parse(localStorage.getItem(LS) || 'null'); if (s) P = Object.assign({}, DEF, s); } catch (e) { /* fresh */ }
@@ -313,6 +324,7 @@ const MAT = {
   post: new THREE.MeshLambertMaterial({ color: 0xff8c2a }),
   metal: new THREE.MeshPhongMaterial({ color: 0x9aa4ab, shininess: 70, specular: 0xffffff }),
   dark: new THREE.MeshLambertMaterial({ color: 0x1b1f23 }),
+  screw: new THREE.MeshPhongMaterial({ color: 0x3a3f44, shininess: 60, specular: 0x888888 }),
   red: new THREE.MeshLambertMaterial({ color: 0xe5484d }),
   reticle: new THREE.MeshBasicMaterial({ color: 0x63e079, side: THREE.DoubleSide, depthTest: false, transparent: true }),
   mpt: new THREE.MeshBasicMaterial({ color: 0x00cdff, depthTest: false }),
@@ -415,7 +427,16 @@ function hingeFrame() {
 }
 
 /* ---------------- build the 3D model ---------------- */
-let movingGroup = null, holes3d = [], panelMats = {}, hw3d = [];
+let screwInfo = { n: 0, len: 0, m: 4, clr: 4.5 };
+let movingGroup = null, holes3d = [], panelMats = {}, hw3d = [], expReg = [], expData = null, explode = 0, expTo = null;
+function applyExplode() {
+  for (const o of expReg) { const e = o.userData.exp; o.position.copy(e.base).addScaledVector(e.off, explode * M); }
+  if (movingGroup && movingGroup.userData.exp) { const e = movingGroup.userData.exp; movingGroup.position.copy(e.base).addScaledVector(e.off, explode * M); }
+  const rx = $('#rX'); if (rx) { rx.value = explode; $('#oX').textContent = Math.round(explode * 100) + '%'; }
+  const lbl = explode > 0.5 ? 'Assemble' : 'Explode';
+  if ($('#btnExplode')) $('#btnExplode').textContent = lbl;
+  if ($('#arExplodeBtn')) $('#arExplodeBtn').textContent = lbl;
+}
 function build() {
   scaler.remove(box); box.traverse(o => { if (o.geometry) o.geometry.dispose(); });
   box = new THREE.Group(); scaler.add(box);
@@ -427,6 +448,20 @@ function build() {
   movingGroup = new THREE.Group(); movingGroup.position.copy(pivotM); box.add(movingGroup);
   const addTo = (obj, moving) => { if (moving) { obj.position.sub(pivotM); movingGroup.add(obj); } else box.add(obj); };
 
+  // exploded-view offsets (mm at 100 %): panels move out along their normals, hardware in between
+  const D0 = Math.max(d.W, d.D, d.H) * 0.4;
+  const NRM = { back: V3(0, 0, -1), front: V3(0, 0, 1), left: V3(-1, 0, 0), right: V3(1, 0, 0), lid: V3(0, 1, 0), base: V3(0, -1, 0) };
+  const expP = {}; for (const id in NRM) expP[id] = NRM[id].clone().multiplyScalar(D0 * (id === hf.moving ? 1.3 : 1));
+  const movOff = expP[hf.moving].clone();
+  const hingeOff = hf.fN.clone().add(hf.mN).normalize().multiplyScalar(D0 * 0.75);
+  const handleOff = movOff.clone().add(hf.mN.clone().multiplyScalar(D0 * 0.35));
+  const lockOff = hf.mN.clone().multiplyScalar(D0 * 0.55).add(hf.mDir.clone().multiplyScalar(D0 * 0.15));
+  const postOff = (sx, sz) => V3(sx, 0, sz).normalize().multiplyScalar(D0 * 0.18);
+  expData = { expP, hingeOff, handleOff, lockOff, postOff };
+  expReg = [];
+  const reg = (obj, off, item, moving) => { obj.userData.exp = { base: obj.position.clone(), off: moving ? off.clone().sub(movOff) : off.clone() }; obj.userData.item = item; expReg.push(obj); return obj; };
+  movingGroup.userData.exp = { base: movingGroup.position.clone(), off: movOff.clone() };
+
   // hardware first (its holes go into the panels)
   const r = 5, leafL = 40, leafD = 28, leafT = 2;
   const hingeAt = [];
@@ -435,15 +470,15 @@ function build() {
     hingeAt.push(hf.pivot.clone().add(hf.axis.clone().multiplyScalar(u)));   // lid: pivot = edge centre (a0 = -len/2); door: pivot = bottom (a0 = 0)
   }
   hingeAt.forEach((c, hi) => {
-    const barrel = cylAlong(mm(c), hf.axis, r * M, leafL * M, MAT.metal); box.add(barrel);
+    const barrel = cylAlong(mm(c), hf.axis, r * M, leafL * M, MAT.metal); box.add(barrel); reg(barrel, hingeOff, 'hinge');
     const hn = `Hinge ${hi + 1}`;
     hw3d.push({ part: hn, kind: 'cyl', c: c.clone(), axis: hf.axis.clone(), r, len: leafL, col: 'metal' });
     const fc = c.clone().add(hf.fDir.clone().multiplyScalar(r + leafD / 2)).add(hf.fN.clone().multiplyScalar(leafT / 2));
     const mc = c.clone().add(hf.mDir.clone().multiplyScalar(r + leafD / 2)).add(hf.mN.clone().multiplyScalar(leafT / 2));
-    box.add(orientedBox(mm(fc), hf.axis, hf.fDir, hf.fN, leafL * M, leafD * M, leafT * M, MAT.metal));
+    box.add(reg(orientedBox(mm(fc), hf.axis, hf.fDir, hf.fN, leafL * M, leafD * M, leafT * M, MAT.metal), hingeOff, 'hinge'));
     hw3d.push({ part: hn, kind: 'box', c: fc, ax: hf.axis.clone(), dir: hf.fDir.clone(), la: leafL, ld: leafD, ln: leafT, col: 'metal' });
     hw3d.push({ part: hn, kind: 'box', c: mc, ax: hf.axis.clone(), dir: hf.mDir.clone(), la: leafL, ld: leafD, ln: leafT, col: 'metal' });
-    addTo(orientedBox(mm(mc), hf.axis, hf.mDir, hf.mN, leafL * M, leafD * M, leafT * M, MAT.metal), true);
+    { const o = orientedBox(mm(mc), hf.axis, hf.mDir, hf.mN, leafL * M, leafD * M, leafT * M, MAT.metal); addTo(o, true); reg(o, hingeOff, 'hinge', true); }
     for (const k of [-12, 12]) {
       holes3d.push(c.clone().add(hf.axis.clone().multiplyScalar(k)).add(hf.fDir.clone().multiplyScalar(r + leafD / 2)));
       holes3d.push(c.clone().add(hf.axis.clone().multiplyScalar(k)).add(hf.mDir.clone().multiplyScalar(r + leafD / 2)));
@@ -455,29 +490,61 @@ function build() {
   if (P.handle) {
     const bl = Math.min(140, hf.len * 0.45), h = 32;
     const bar = far.clone().add(hf.mN.clone().multiplyScalar(h));
-    addTo(orientedBox(mm(bar), hf.axis, hf.mDir, hf.mN, bl * M, 12 * M, 10 * M, MAT.dark), true);
+    { const o = orientedBox(mm(bar), hf.axis, hf.mDir, hf.mN, bl * M, 12 * M, 10 * M, MAT.dark); addTo(o, true); reg(o, handleOff, 'handle', true); }
     hw3d.push({ part: 'Handle', kind: 'box', c: bar.clone(), ax: hf.axis.clone(), dir: hf.mDir.clone(), la: bl, ld: 12, ln: 10, col: 'dark' });
     for (const k of [-(bl / 2 - 7), bl / 2 - 7]) {
       const sc = far.clone().add(hf.axis.clone().multiplyScalar(k)).add(hf.mN.clone().multiplyScalar(h / 2));
-      addTo(orientedBox(mm(sc), hf.axis, hf.mDir, hf.mN, 10 * M, 10 * M, h * M, MAT.dark), true);
+      { const o = orientedBox(mm(sc), hf.axis, hf.mDir, hf.mN, 10 * M, 10 * M, h * M, MAT.dark); addTo(o, true); reg(o, handleOff, 'handle', true); }
       hw3d.push({ part: 'Handle', kind: 'box', c: sc.clone(), ax: hf.axis.clone(), dir: hf.mDir.clone(), la: 10, ld: 10, ln: h - 10, col: 'dark' });
       holes3d.push(far.clone().add(hf.axis.clone().multiplyScalar(k)));
     }
   }
   if (P.interlock) {
     const sw = far.clone().add(hf.mDir.clone().multiplyScalar(20)).sub(hf.mN.clone().multiplyScalar(d.t + 14)).add(hf.axis.clone().multiplyScalar(Math.min(120, hf.len * 0.3)));
-    box.add(orientedBox(mm(sw), hf.axis, hf.mDir, hf.mN, 30 * M, 16 * M, 24 * M, MAT.dark));
+    box.add(reg(orientedBox(mm(sw), hf.axis, hf.mDir, hf.mN, 30 * M, 16 * M, 24 * M, MAT.dark), lockOff, 'lock'));
     hw3d.push({ part: 'Interlock switch', kind: 'box', c: sw.clone(), ax: hf.axis.clone(), dir: hf.mDir.clone(), la: 30, ld: 16, ln: 24, col: 'dark' });
     hw3d.push({ part: 'Interlock switch', kind: 'box', c: sw.clone().add(hf.mN.clone().multiplyScalar(14.5)), ax: hf.axis.clone(), dir: hf.mDir.clone(), la: 5, ld: 5, ln: 5, col: 'red' });
-    box.add(orientedBox(mm(sw.clone().add(hf.mN.clone().multiplyScalar(14))), hf.axis, hf.mDir, hf.mN, 5 * M, 5 * M, 5 * M, MAT.red));
+    box.add(reg(orientedBox(mm(sw.clone().add(hf.mN.clone().multiplyScalar(14))), hf.axis, hf.mDir, hf.mN, 5 * M, 5 * M, 5 * M, MAT.red), lockOff, 'lock'));
   }
   // corner posts
   if (P.posts) {
     const s = 15, x = d.W / 2 - d.t - s / 2, z = d.D / 2 - d.t - s / 2;
     for (const [sx, sz] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
       const m = new THREE.Mesh(new THREE.BoxGeometry(s * M, d.Hw * M, s * M), MAT.post);
-      m.position.set(sx * x * M, (d.yb + d.Hw / 2) * M, sz * z * M); box.add(m);
+      m.position.set(sx * x * M, (d.yb + d.Hw / 2) * M, sz * z * M); box.add(m); reg(m, postOff(sx, sz), 'post');
       hw3d.push({ part: 'Corner post ' + (hw3d.filter(q => q.part.startsWith('Corner')).length + 1), kind: 'box', c: V3(sx * x, d.yb + d.Hw / 2, sz * z), ax: V3(1, 0, 0), dir: V3(0, 1, 0), la: s, ld: d.Hw, ln: s, col: 'post' });
+    }
+  }
+  // side screws: panel -> corner post, through clearance holes into heat-set inserts
+  const SCR = { 3: { clr: 3.4, head: 5.7, hh: 1.65 }, 4: { clr: 4.5, head: 7.6, hh: 2.2 }, 5: { clr: 5.5, head: 9.5, hh: 2.75 } }[+P.screwM] || { clr: 4.5, head: 7.6, hh: 2.2 };
+  screwInfo = { n: 0, len: 0, m: +P.screwM, clr: SCR.clr };
+  if (P.screws && P.posts) {
+    const sPost = 15, pxc = d.W / 2 - d.t - sPost / 2, pzc = d.D / 2 - d.t - sPost / 2;
+    const L = [8, 10, 12, 16, 20, 25].find(v => v >= d.t + 6) || 25; screwInfo.len = L;
+    const ys = (() => { const span = d.Hw - 40, n = Math.max(2, Math.ceil(span / Math.max(20, +P.screwPitch)) + 1); return Array.from({ length: n }, (_, i) => 20 + span * i / (n - 1)); })();
+    const fixed = (id) => !(P.open === 'door' ? id === 'front' : id === 'lid');
+    for (const p of panelList()) {
+      if (!fixed(p.id)) continue;
+      let pts = [];
+      if (p.id === 'back' || p.id === 'front') pts = ys.flatMap(y => [[d.t + sPost / 2, y], [p.w - d.t - sPost / 2, y]]);
+      else if (p.id === 'left' || p.id === 'right') pts = ys.flatMap(y => [[sPost / 2, y], [p.w - sPost / 2, y]]);
+      else if (p.id === 'base' || p.id === 'lid') pts = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([sx, sz]) => [d.W / 2 + sx * pxc, d.D / 2 - sz * pzc]);
+      if (p.id === 'lid' && !P.posts) pts = [];
+      const q4 = new THREE.Quaternion().setFromEuler(new THREE.Euler(...p.rot)), m4 = new THREE.Matrix4().compose(p.pos, q4, V3(1, 1, 1));
+      const nrm = NRM[p.id], moving = false;
+      for (const [lx, ly] of pts) {
+        const c = V3(lx, ly, d.t / 2).applyMatrix4(m4);
+        if (holes3d.some(hh => hh.distanceTo(c) < SCR.clr / 2 + 4.5 / 2 + 3)) continue;   // clear of hinge / handle holes
+        const hole = c.clone(); hole.kind = 'screw'; hole.hd = SCR.clr; holes3d.push(hole);
+        const head = c.clone().addScaledVector(nrm, d.t / 2 + SCR.hh / 2), shankLen = L - d.t;
+        const shank = c.clone().addScaledVector(nrm, -(d.t / 2 + shankLen / 2));
+        const pn = `Screws M${+P.screwM}x${L} - ${p.name}`, off = expP[p.id].clone().multiplyScalar(1.35);
+        const mh = cylAlong(mm(head), nrm, SCR.head / 2 * M, SCR.hh * M, MAT.screw); box.add(mh); reg(mh, off, 'screw');
+        const ms = cylAlong(mm(shank), nrm, +P.screwM * 0.42 * M, shankLen * M, MAT.screw); box.add(ms); reg(ms, off, 'screw');
+        hw3d.push({ part: pn, pid: p.id, kind: 'cyl', c: head, axis: nrm.clone(), r: SCR.head / 2, len: SCR.hh, col: 'dark' });
+        hw3d.push({ part: pn, pid: p.id, kind: 'cyl', c: shank, axis: nrm.clone(), r: +P.screwM * 0.42, len: shankLen, col: 'dark' });
+        screwInfo.n++;
+      }
     }
   }
   // panels (holes from hardware projected into each panel)
@@ -485,7 +552,9 @@ function build() {
     const mat4 = new THREE.Matrix4().compose(p.pos, new THREE.Quaternion().setFromEuler(new THREE.Euler(...p.rot)), V3(1, 1, 1));
     const inv = mat4.clone().invert();
     const holes = [];
-    for (const h of holes3d) { const q = h.clone().applyMatrix4(inv); if (q.z > -3 && q.z < d.t + 3 && q.x > 4 && q.x < p.w - 4 && q.y > 4 && q.y < p.h - 4) holes.push({ x: q.x, y: q.y, d: 4.5 }); }
+    let screwN = 0;
+    for (const h of holes3d) { const q = h.clone().applyMatrix4(inv); if (q.z > -3 && q.z < d.t + 3 && q.x > 3 && q.x < p.w - 3 && q.y > 3 && q.y < p.h - 3) { holes.push({ x: q.x, y: q.y, d: h.hd || 4.5 }); if (h.kind === 'screw') screwN++; } }
+    p.f.screwN = screwN;
     // probe holes that would clash with hinge / handle screw holes are dropped
     const pr = (p.f.probes || []).filter(c => { const bad = holes.some(hh => Math.hypot(hh.x - c.x, hh.y - c.y) < hh.d / 2 + c.d / 2 + 3); if (bad) p.f.probeSkip = (p.f.probeSkip || 0) + 1; return !bad; });
     p.f.probes = pr; p.f.holes = holes.concat(pr); panelMats[p.id] = p;
@@ -495,10 +564,11 @@ function build() {
     const edges = new THREE.LineSegments(new THREE.EdgesGeometry(g, 25), MAT.edge);
     const grp = new THREE.Group(); grp.add(mesh, edges);
     grp.position.copy(p.pos).multiplyScalar(M); grp.rotation.set(...p.rot);
-    addTo(grp, p.id === hf.moving);
+    addTo(grp, p.id === hf.moving); reg(grp, expP[p.id], p.id, p.id === hf.moving);
   }
   // ground shadow
   shadow.scale.set(d.W * M * 1.5, 1, d.D * M * 1.5);
+  applyExplode();
   applyAngle();
   ui();
 }
@@ -520,6 +590,9 @@ function report() {
   if (Math.max(d.W, d.D, d.H) > 1000 && d.t < 6) warns.push('Panels over 1 m in 3-5 mm acrylic will flex - consider 6 mm or more.');
   if (P.notch && (+P.notchW > 12 || +P.notchH > 12)) warns.push('The cable notch is wider than 12 mm - fill it with a brush strip or grommet so fingers cannot reach in.');
   if (!P.interlock) warns.push('No interlock: the cover can be opened while the machine runs.');
+  if (P.screws && !P.posts) warns.push('Side screws need the corner posts - turn on Corner posts in Parts.');
+  if (P.screws && P.posts && 7.5 - screwInfo.clr / 2 < screwInfo.clr) warns.push(`M${P.screwM} holes sit only ${(7.5 - screwInfo.clr / 2).toFixed(1)} mm from the side-panel edges - acrylic can crack. Use M3 or M4.`);
+  if (P.screws && P.posts && d.t < 4) warns.push('3 mm acrylic is thin for screwing - use 4 mm or more, and don\'t over-tighten.');
   if (P.probe) {
     if (probeInfo.skipped) warns.push(`${probeInfo.skipped} probe hole${probeInfo.skipped > 1 ? 's were left out - they' : ' was left out - it'} would hit an edge, corner post, vent, the notch or a hinge. Move the pattern (Height / Across) or change the spacing.`);
     if (!probeInfo.placed) warns.push('No probe holes fit on the chosen panel with these settings.');
@@ -541,18 +614,21 @@ function ui() {
   $('#segEdge').innerHTML = edgesFor(P.open).map(([v, l]) => `<button data-v="${v}" aria-pressed="${v === P.edge}">${l}</button>`).join('');
   $$('[data-notch]').forEach(e => e.hidden = !P.notch);
   $$('[data-probe]').forEach(e => e.hidden = !P.probe);
+  $$('[data-screws]').forEach(e => e.hidden = !P.screws);
   $$('#segProbe button').forEach(b => b.setAttribute('aria-pressed', b.dataset.v === P.probeSide));
   $('#btnStop').textContent = `Stop at ${P.stop}°`;
   $('#btnUnits').textContent = units;
   const R = report();
   $('#chip').textContent = `${fmtL(R.d.W)} × ${fmtL(R.d.D)} × ${fmtL(R.d.H)} ${uL()} · ${R.kg.toFixed(1)} kg`;
   $('#cutTable').innerHTML = `<tr><th>Panel</th><th>W (${uL()})</th><th>H (${uL()})</th><th>Cut-outs</th></tr>` +
-    R.pl.map(p => { const f = (panelMats[p.id] || p).f; return `<tr><td>${p.name}</td><td>${fmtL(p.w)}</td><td>${fmtL(p.h)}</td><td>${(f.holes || []).length - (f.probes || []).length}${f.probes && f.probes.length ? ' + ' + f.probes.length + ' probe' : ''}${f.slots && f.slots.length ? ' + ' + f.slots.length + ' slots' : ''}${f.notch ? ' + notch' : ''}</td></tr>`; }).join('') +
+    R.pl.map(p => { const f = (panelMats[p.id] || p).f; return `<tr><td>${p.name}</td><td>${fmtL(p.w)}</td><td>${fmtL(p.h)}</td><td>${(f.holes || []).length - (f.probes || []).length - (f.screwN || 0)}${f.screwN ? ' + ' + f.screwN + ' screw' : ''}${f.probes && f.probes.length ? ' + ' + f.probes.length + ' probe' : ''}${f.slots && f.slots.length ? ' + ' + f.slots.length + ' slots' : ''}${f.notch ? ' + notch' : ''}</td></tr>`; }).join('') +
     `<tr><td><b>Acrylic ${R.d.t} mm</b></td><td colspan="2">${R.area.toFixed(2)} m²</td><td>${R.kg.toFixed(1)} kg</td></tr>`;
   const n = +P.hinges, hw = [['Hinge, 40 mm leaf, stainless', n], ['M4 × 12 screw + nyloc nut (hinges)', n * 4]];
   if (P.handle) hw.push(['Pull handle, ~' + Math.round(Math.min(140, hingeFrame().len * 0.45)) + ' mm centres', 1], ['M4 × 16 screw (handle)', 2]);
   if (P.interlock) hw.push(['Safety interlock switch + actuator', 1]);
-  if (P.posts) hw.push(['Corner post 15 × 15 × ' + Math.round(R.d.Hw) + ' mm (PETG)', 4], ['M3 heat-set insert + M3 × 8 screw', 4 * Math.max(2, Math.ceil(R.d.Hw / 150)) * 2]);
+  if (P.posts) hw.push(['Corner post 15 × 15 × ' + Math.round(R.d.Hw) + ' mm (PETG)', 4]);
+  if (P.posts && P.screws && screwInfo.n) hw.push([`M${screwInfo.m} × ${screwInfo.len} button-head screw (ISO 7380), stainless`, screwInfo.n], [`M${screwInfo.m} heat-set insert in the posts`, screwInfo.n], [`M${screwInfo.m} nylon washer (protects the acrylic)`, screwInfo.n]);
+  else if (P.posts) hw.push(['Acrylic cement or VHB tape to bond the posts', '-']);
   if (P.open === 'lid' && R.d.W * R.d.D / 1e6 * R.d.t * 1.19 > 4) hw.push(['Gas strut / lid stay', 1]);
   if (P.notch) hw.push(['Brush strip for the cable notch', 1]);
   if (P.probe && P.probeGrommet && probeInfo.placed) hw.push([`Rubber grommet for Ø${P.probeD} mm hole, ${R.d.t} mm panel`, probeInfo.placed]);
@@ -689,7 +765,7 @@ function stlFile() {
    made of lines and arcs (circles are split into two arcs, so no seam edges).
    Planes for straight sides, cylinders for holes/slots/barrels. Written as an
    assembly: one part per panel / hardware item, placed in final position. */
-function stepFile() {
+function stepFile(exploded) {
   const ent = [], add = (t) => { ent.push(t); return '#' + ent.length; };
   const f = (v) => { const x = Math.abs(v) < 1e-9 ? 0 : v; let t = x.toFixed(6); return t; };
   const pt = (p) => add(`CARTESIAN_POINT('',(${f(p.x)},${f(p.y)},${f(p.z)}))`);
@@ -799,12 +875,16 @@ function stepFile() {
       outer = [{ a: [0, 0] }, { a: [a, 0] }, { a: [a, h] }, { a: [b, h] }, { a: [b, 0] }, { a: [p.w, 0] }, { a: [p.w, p.h] }, { a: [0, p.h] }]; }
     const loops = [outer, ...(pm.f.slots || []).map(slotCW), ...(pm.f.holes || []).map(h => circCW(h.x, h.y, h.d / 2))];
     const tint = P.tint === 'clear' ? 'acr' : P.tint;
-    parts.push({ name: `${p.name} panel ${Math.round(p.w)}x${Math.round(p.h)}x${d.t}`, bodies: [() => solid(p.name, loops, F, d.t, tint)] });
+    parts.push({ name: `${p.name} panel ${Math.round(p.w)}x${Math.round(p.h)}x${d.t}`, exp: expData.expP[p.id], bodies: [() => solid(p.name, loops, F, d.t, tint)] });
   }
   const groups = {};
   for (const h of hw3d) (groups[h.part] = groups[h.part] || []).push(h);
   for (const [name, list] of Object.entries(groups)) {
-    parts.push({ name, bodies: list.map((h, i) => () => {
+    const e0 = list[0];
+    const exp = name.startsWith('Hinge') ? expData.hingeOff : name === 'Handle' ? expData.handleOff : name.startsWith('Interlock') ? expData.lockOff
+      : name.startsWith('Corner') ? expData.postOff(Math.sign(e0.c.x), Math.sign(e0.c.z))
+      : e0.pid ? expData.expP[e0.pid].clone().multiplyScalar(1.35) : V3(0, 0, 0);
+    parts.push({ name, exp, bodies: list.map((h, i) => () => {
       if (h.kind === 'cyl') {
         const ez = h.axis.clone().normalize(), ex = Math.abs(ez.x) < 0.9 ? V3(1, 0, 0) : V3(0, 1, 0);
         ex.sub(ez.clone().multiplyScalar(ex.dot(ez))).normalize();
@@ -826,7 +906,10 @@ function stepFile() {
     add(`SHAPE_DEFINITION_REPRESENTATION(${pr.pds},${rep})`);
     const nauo = add(`NEXT_ASSEMBLY_USAGE_OCCURRENCE('${k + 1}','${q(pt_.name)}','',${asm.pd},${pr.pd},$)`);
     const pdsN = add(`PRODUCT_DEFINITION_SHAPE('','',${nauo})`);
-    const idt = add(`ITEM_DEFINED_TRANSFORMATION('','',${partAx},${asmAx})`);
+    const off = exploded && pt_.exp ? pt_.exp : V3(0, 0, 0);
+    const placeAx = off.lengthSq() ? ax2(off, V3(0, 0, 1), V3(1, 0, 0)) : asmAx;
+    if (placeAx !== asmAx) asmItems.push(placeAx);
+    const idt = add(`ITEM_DEFINED_TRANSFORMATION('','',${partAx},${placeAx})`);
     pt_.rr = add(`(REPRESENTATION_RELATIONSHIP('','',${rep},ASMREP)REPRESENTATION_RELATIONSHIP_WITH_TRANSFORMATION(${idt})SHAPE_REPRESENTATION_RELATIONSHIP())`);
     add(`CONTEXT_DEPENDENT_SHAPE_REPRESENTATION(${pt_.rr},${pdsN})`);
   });
@@ -834,7 +917,7 @@ function stepFile() {
   add(`SHAPE_DEFINITION_REPRESENTATION(${asm.pds},${asmRep})`);
   add(`MECHANICAL_DESIGN_GEOMETRIC_PRESENTATION_REPRESENTATION('',(${styled.join(',')}),${gctx})`);
   const now = new Date().toISOString().slice(0, 19);
-  const name = `enclosure_${d.W}x${d.D}x${d.H}.step`;
+  const name = `enclosure_${d.W}x${d.D}x${d.H}${exploded ? '_exploded' : ''}.step`;
   return ['ISO-10303-21;', 'HEADER;', `FILE_DESCRIPTION(('SEOD AR safety enclosure'),'2;1');`,
     `FILE_NAME('${name}','${now}',('SEOD AR'),('XP Power'),'SEOD AR Wizard','SEOD AR Wizard','');`,
     `FILE_SCHEMA(('AUTOMOTIVE_DESIGN { 1 0 10303 214 1 1 1 1 }'));`, 'ENDSEC;', 'DATA;',
@@ -842,6 +925,96 @@ function stepFile() {
 }
 $('#dlStep').addEventListener('click', () => {
   try { download(`enclosure_${P.W}x${P.D}x${P.H}.step`, stepFile(), 'application/step'); toast('STEP saved - open it in SolidWorks'); }
+  catch (e) { console.error(e); toast('STEP export failed: ' + e.message, true); }
+});
+
+/* ---------------- exploded view sheet (PNG with balloons + parts list) ---------------- */
+function explodedSheet() {
+  const keepE = explode, keepA = angle, keepEdge = MAT.edge.color.getHex(), keepOp = MAT.acr.opacity;
+  explode = 1; expTo = null; angle = 0; animTo = null; applyAngle(); applyExplode();
+  const W = 2200, H = 1400, VW = 1450, d = dims();
+  const c2 = new THREE.PerspectiveCamera(32, VW / H, 0.01, 100);
+  scene.updateMatrixWorld(true);
+  const bb = new THREE.Box3().setFromObject(box), ctr = bb.getCenter(V3(0, 0, 0)), R = bb.getSize(V3(0, 0, 0)).length() / 2;
+  const dist = R / Math.sin(c2.fov * Math.PI / 360) * 0.98;
+  c2.position.copy(ctr).addScaledVector(V3(0.95, 0.7, 1.2).normalize(), dist); c2.lookAt(ctr);
+  c2.near = dist / 100; c2.far = dist * 10; c2.updateProjectionMatrix();
+  const vis = { grid: grid.visible, shadow: shadow.visible };
+  grid.visible = false; shadow.visible = false;
+  MAT.edge.color.setHex(0x0b4f6c); MAT.acr.opacity = 0.2;
+  const pr = renderer.getPixelRatio();
+  renderer.setPixelRatio(1); renderer.setSize(VW, H, false); renderer.setClearColor(0xffffff, 1);
+  renderer.render(scene, c2);
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+  const x = cv.getContext('2d');
+  x.fillStyle = '#fff'; x.fillRect(0, 0, W, H); x.drawImage(renderer.domElement, 0, 0, VW, H);
+  // items: one balloon per unique part
+  const items = [];
+  for (const p of panelList()) {
+    const pm = panelMats[p.id] || p, f = pm.f;
+    const cuts = [(f.holes || []).length ? `${f.holes.length} holes` : '', f.slots && f.slots.length ? `${f.slots.length} slots` : '', f.notch ? 'notch' : ''].filter(Boolean).join(', ');
+    items.push({ key: p.id, label: `${p.name} panel`, qty: 1, note: `${Math.round(p.w)} × ${Math.round(p.h)} × ${d.t} mm acrylic${cuts ? ' · ' + cuts : ''}` });
+  }
+  items.push({ key: 'hinge', label: 'Hinge', qty: +P.hinges, note: '40 mm leaf, stainless, M4 × 12 + nyloc' });
+  if (P.posts) items.push({ key: 'post', label: 'Corner post', qty: 4, note: `15 × 15 × ${Math.round(d.Hw)} mm PETG` });
+  if (P.posts && P.screws && screwInfo.n) items.push({ key: 'screw', label: `Screw M${screwInfo.m} × ${screwInfo.len}`, qty: screwInfo.n, note: `button head + M${screwInfo.m} heat-set insert + nylon washer` });
+  if (P.handle) items.push({ key: 'handle', label: 'Pull handle', qty: 1, note: 'M4 × 16 screws' });
+  if (P.interlock) items.push({ key: 'lock', label: 'Safety interlock switch', qty: 1, note: 'with actuator' });
+  const sc = ctr.clone().project(c2), cx0 = (sc.x + 1) / 2 * VW, cy0 = (1 - sc.y) / 2 * H, placed = [];
+  items.forEach((it, i) => {
+    it.no = i + 1;
+    const obj = expReg.find(o => o.userData.item === it.key); if (!obj) return;
+    const c = new THREE.Box3().setFromObject(obj).getCenter(V3(0, 0, 0)).project(c2);
+    const px = (c.x + 1) / 2 * VW, py = (1 - c.y) / 2 * H;
+    let dx = px - cx0, dy = py - cy0, L = Math.hypot(dx, dy) || 1; dx /= L; dy /= L;
+    let bx = px + dx * 110, by = py + dy * 110, tries = 0;
+    while (tries++ < 12 && placed.some(q => Math.hypot(q[0] - bx, q[1] - by) < 58)) { bx += dx * 40 - dy * 22; by += dy * 40 + dx * 22; }
+    bx = Math.max(34, Math.min(VW - 34, bx)); by = Math.max(34, Math.min(H - 34, by)); placed.push([bx, by]);
+    x.strokeStyle = '#003B5E'; x.lineWidth = 2; x.beginPath(); x.moveTo(px, py); x.lineTo(bx, by); x.stroke();
+    x.fillStyle = '#003B5E'; x.beginPath(); x.arc(px, py, 4, 0, Math.PI * 2); x.fill();
+    x.fillStyle = '#fff'; x.beginPath(); x.arc(bx, by, 24, 0, Math.PI * 2); x.fill(); x.lineWidth = 3; x.stroke();
+    x.fillStyle = '#003B5E'; x.font = '700 22px Lato, Arial, sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText(String(it.no), bx, by + 1);
+  });
+  // parts list
+  const tx = VW + 30, tw = W - VW - 60;
+  x.textAlign = 'left'; x.textBaseline = 'alphabetic';
+  x.fillStyle = '#63E079'; x.fillRect(tx, 46, 6, 70);
+  x.fillStyle = '#000305'; x.font = '900 34px Lato, Arial, sans-serif'; x.fillText('Exploded view', tx + 20, 80);
+  x.font = '400 19px Lato, Arial, sans-serif'; x.fillStyle = '#334'; x.fillText(`Safety enclosure ${d.W} × ${d.D} × ${d.H} mm · ${d.t} mm acrylic`, tx + 20, 110);
+  let y = 170;
+  x.font = '700 15px Lato, Arial, sans-serif'; x.fillStyle = '#667';
+  x.fillText('NO.', tx, y); x.fillText('PART', tx + 60, y); x.textAlign = 'right'; x.fillText('QTY', tx + tw, y); x.textAlign = 'left';
+  x.strokeStyle = '#ccd'; x.lineWidth = 1; x.beginPath(); x.moveTo(tx, y + 10); x.lineTo(tx + tw, y + 10); x.stroke(); y += 44;
+  for (const it of items) {
+    x.fillStyle = '#003B5E'; x.beginPath(); x.arc(tx + 16, y - 7, 16, 0, Math.PI * 2); x.fill();
+    x.fillStyle = '#fff'; x.font = '700 16px Lato, Arial, sans-serif'; x.textAlign = 'center'; x.fillText(String(it.no), tx + 16, y - 1);
+    x.textAlign = 'left'; x.fillStyle = '#000305'; x.font = '700 19px Lato, Arial, sans-serif'; x.fillText(it.label, tx + 60, y - 6);
+    x.textAlign = 'right'; x.fillText(String(it.qty), tx + tw, y - 6); x.textAlign = 'left';
+    x.fillStyle = '#556'; x.font = '400 15px Lato, Arial, sans-serif'; x.fillText(it.note, tx + 60, y + 16);
+    x.strokeStyle = '#eef'; x.beginPath(); x.moveTo(tx, y + 32); x.lineTo(tx + tw, y + 32); x.stroke();
+    y += 66;
+  }
+  y += 10; x.fillStyle = '#556'; x.font = '400 15px Lato, Arial, sans-serif';
+  const hingeTxt = P.open === 'door' ? `Front door hinged on the ${P.edge}` : `Lid hinged at the ${P.edge}`;
+  x.fillText(`${hingeTxt} · hinge stop ${P.stop}°`, tx, y);
+  if (P.probe && probeInfo.placed) x.fillText(`${probeInfo.placed} × Ø${P.probeD} mm test probe holes${P.probeGrommet ? ' with grommets' : ''}`, tx, y + 24);
+  x.fillStyle = '#99a'; x.font = '400 13px Lato, Arial, sans-serif'; x.fillText('SEOD AR Wizard · ' + new Date().toISOString().slice(0, 10), tx, H - 30);
+  // restore
+  MAT.edge.color.setHex(keepEdge); MAT.acr.opacity = keepOp;
+  grid.visible = vis.grid; shadow.visible = vis.shadow;
+  renderer.setClearColor(0x000000, 0); renderer.setPixelRatio(pr); resize();
+  explode = keepE; angle = keepA; applyExplode(); applyAngle();
+  return cv;
+}
+$('#rX').addEventListener('input', e => { expTo = null; explode = +e.target.value; applyExplode(); });
+$('#btnExplode').addEventListener('click', () => { expTo = explode > 0.5 ? 0 : 1; });
+$('#arExplodeBtn').addEventListener('click', () => { expTo = explode > 0.5 ? 0 : 1; });
+$('#dlExpPng').addEventListener('click', () => {
+  try { explodedSheet().toBlob(b => b && download(`enclosure_${P.W}x${P.D}x${P.H}_exploded.png`, b), 'image/png'); }
+  catch (e) { console.error(e); toast('Could not make the sheet: ' + e.message, true); }
+});
+$('#dlStepX').addEventListener('click', () => {
+  try { download(`enclosure_${P.W}x${P.D}x${P.H}_exploded.step`, stepFile(true), 'application/step'); toast('Exploded STEP saved'); }
   catch (e) { console.error(e); toast('STEP export failed: ' + e.message, true); }
 });
 $('#dlDxf').addEventListener('click', () => download(`enclosure_${P.W}x${P.D}x${P.H}_panels.dxf`, dxfFile(), 'application/dxf'));
@@ -1108,6 +1281,7 @@ window.addEventListener('resize', () => { resize(); if (!AR.gyro) camOrbit(); })
 let last = performance.now();
 renderer.setAnimationLoop((t, frame) => {
   const dt = Math.min(0.1, (t - last) / 1000); last = t;
+  if (expTo !== null) { const k = Math.min(1, dt * 3.5), nx = explode + (expTo - explode) * k; explode = Math.abs(expTo - nx) < 0.004 ? expTo : nx; if (explode === expTo) expTo = null; applyExplode(); }
   if (animTo !== null) { const k = Math.min(1, dt * 4), nx = angle + (animTo - angle) * k; angle = Math.abs(animTo - nx) < 0.3 ? animTo : nx; if (angle === animTo) animTo = null; applyAngle(); }
   if (frame && AR.hit) {
     const hits = frame.getHitTestResults(AR.hit);
