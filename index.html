@@ -85,7 +85,7 @@ select.num{text-align:left}
 h3{font-size:11px;letter-spacing:2px;text-transform:uppercase;color:var(--green);margin:14px 0 9px;font-weight:700}
 h3:first-child{margin-top:2px}
 .seg{display:flex;border:1px solid var(--line-mid);border-radius:3px;overflow:hidden;margin-bottom:11px}
-.seg button{flex:1;background:transparent;border:0;padding:9px 6px;font-size:13px;cursor:pointer;color:var(--muted)}
+.seg button{flex:1;background:transparent;border:0;padding:9px 4px;font-size:12.5px;white-space:nowrap;cursor:pointer;color:var(--muted)}
 .seg button+button{border-left:1px solid var(--line)}
 .seg button[aria-pressed=true]{background:var(--green);color:#012;font-weight:900}
 .check{display:flex;align-items:center;gap:10px;font-size:14px;padding:7px 0;cursor:pointer}
@@ -193,6 +193,20 @@ td:not(:first-child),th:not(:first-child){text-align:right}
         <div class="row" data-notch><label for="rNW">Notch W</label><input type="range" id="rNW" data-k="notchW" min="20" max="300" step="5"><input class="num" data-n="notchW" inputmode="decimal"></div>
         <div class="row" data-notch><label for="rNH">Notch H</label><input type="range" id="rNH" data-k="notchH" min="15" max="200" step="5"><input class="num" data-n="notchH" inputmode="decimal"></div>
         <p class="hint">Vent slots are 6 mm wide, under the 12 mm finger-safe limit.</p>
+        <h3>Test probe holes</h3>
+        <label class="check"><input type="checkbox" data-c="probe"> Holes for test probes to pass through</label>
+        <div data-probe>
+          <div class="seg" id="segProbe"><button data-v="left">Left</button><button data-v="right">Right</button><button data-v="both">Both sides</button><button data-v="front">Front</button><button data-v="back">Back</button></div>
+          <div class="row"><label for="sPN">Holes</label><select class="num" id="sPN" data-sel="probeN" style="grid-column:2 / span 2">
+            <option value="1">1 hole</option><option value="2">2 holes</option><option value="3">3 holes</option><option value="4">4 holes</option><option value="5">5 holes</option><option value="6">6 holes</option><option value="8">8 holes</option><option value="10">10 holes</option><option value="12">12 holes</option></select></div>
+          <div class="row"><label for="sPR">Rows</label><select class="num" id="sPR" data-sel="probeRows" style="grid-column:2 / span 2"><option value="1">1 row</option><option value="2">2 rows</option><option value="3">3 rows</option></select></div>
+          <div class="row"><label for="rPD">Diameter</label><input type="range" id="rPD" data-k="probeD" min="3" max="30" step="0.5"><input class="num" data-n="probeD" inputmode="decimal"></div>
+          <div class="row"><label for="rPS">Spacing</label><input type="range" id="rPS" data-k="probeS" min="8" max="150" step="1"><input class="num" data-n="probeS" inputmode="decimal"></div>
+          <div class="row"><label for="rPY">Height</label><input type="range" id="rPY" data-k="probeY" min="10" max="1500" step="5"><input class="num" data-n="probeY" inputmode="decimal"></div>
+          <div class="row"><label for="rPX">Across</label><input type="range" id="rPX" data-k="probeX" min="-800" max="800" step="5"><input class="num" data-n="probeX" inputmode="decimal"></div>
+          <label class="check"><input type="checkbox" data-c="probeGrommet"> Rubber grommets in the probe holes</label>
+          <p class="hint"><b>Height</b> is the centre of the pattern above the bottom edge of the panel. <b>Across</b> moves it from the panel centre (towards the front on the side panels). Holes that would hit an edge, a corner post, a vent, the notch or a hinge are left out and flagged in the build list.</p>
+        </div>
       </div>
 
       <!-- BUILD -->
@@ -248,7 +262,8 @@ const $ = (s, r) => (r || document).querySelector(s), $$ = (s, r) => [...(r || d
 const M = 0.001;                                  // mm -> m
 const LS = 'seod-ar.v1';
 const DEF = { W: 600, D: 450, H: 500, t: 5, tint: 'clear', base: false, clear: 30, open: 'lid', edge: 'back', hinges: 2, stop: 90,
-  posts: true, handle: true, interlock: true, vents: false, notch: true, notchW: 80, notchH: 40 };
+  posts: true, handle: true, interlock: true, vents: false, notch: true, notchW: 80, notchH: 40,
+  probe: false, probeSide: 'both', probeN: 4, probeRows: 1, probeD: 10, probeS: 30, probeY: 150, probeX: 0, probeGrommet: true };
 let P = Object.assign({}, DEF);
 try { const s = JSON.parse(localStorage.getItem(LS) || 'null'); if (s) P = Object.assign({}, DEF, s); } catch (e) { /* fresh */ }
 let units = 'mm', angle = 0, animTo = null;
@@ -338,6 +353,25 @@ function dims() {
   const t = +P.t, yb = P.base ? t : 0, Hw = P.H - t - yb;
   return { W: +P.W, D: +P.D, H: +P.H, t, yb, Hw };
 }
+// test probe holes: a grid of round holes on the chosen panel(s), clear of edges, posts, vents and the notch
+let probeInfo = { placed: 0, skipped: 0 };
+function probeHoles(id, w, h, f) {
+  if (!P.probe) return;
+  const sel = P.probeSide;
+  if (!(sel === id || (sel === 'both' && (id === 'left' || id === 'right')))) return;
+  const n = +P.probeN, rows = Math.max(1, Math.min(+P.probeRows, n)), cols = Math.ceil(n / rows), sp = +P.probeS, dd = +P.probeD, r = dd / 2;
+  const cx = w / 2 + (+P.probeX), cy = +P.probeY, mx = r + 4 + (P.posts ? 15 : 0), my = r + 4, out = [];
+  let k = 0, skip = 0;
+  for (let ri = 0; ri < rows; ri++) for (let ci = 0; ci < cols && k < n; ci++, k++) {
+    const x = cx + (ci - (cols - 1) / 2) * sp, y = cy + ((rows - 1) / 2 - ri) * sp;
+    let ok = x > mx && x < w - mx && y > my && y < h - my;
+    if (ok && f.slots) ok = !f.slots.some(sl => x + r + 3 > sl.x && x - r - 3 < sl.x + sl.w && y + r + 3 > sl.y && y - r - 3 < sl.y + sl.h);
+    if (ok && f.notch) { const a = (w - f.notch.w) / 2; if (x + r + 3 > a && x - r - 3 < a + f.notch.w && y - r - 3 < f.notch.h) ok = false; }
+    if (ok && out.some(o => Math.hypot(o.x - x, o.y - y) < dd + 2)) ok = false;   // spacing tighter than the holes
+    if (ok) out.push({ x, y, d: dd }); else skip++;
+  }
+  f.probes = out; f.probeSkip = skip;
+}
 // panel list in closed state: name, size (mm), placement (m), features
 function panelList() {
   const d = dims(), { W, D, H, t, yb, Hw } = d, pl = [];
@@ -355,6 +389,7 @@ function panelList() {
   pl.push({ id: 'right', name: 'Right', w: D - 2 * t, h: Hw, f: side('right'), pos: V3(W / 2, yb, -D / 2 + t), rot: [0, -Math.PI / 2, 0] });
   pl.push({ id: 'lid', name: P.open === 'lid' ? 'Lid' : 'Top', w: W, h: D, f: {}, pos: V3(-W / 2, H - t, D / 2), rot: [-Math.PI / 2, 0, 0] });
   if (P.base) pl.push({ id: 'base', name: 'Base', w: W, h: D, f: {}, pos: V3(-W / 2, 0, D / 2), rot: [-Math.PI / 2, 0, 0] });
+  for (const p of pl) probeHoles(p.id, p.w, p.h, p.f);
   return pl;
 }
 // hinge frame (mm): pivot, axis, fixed-leaf direction/normal, moving-leaf direction/normal, edge length, moving panel depth
@@ -386,7 +421,7 @@ function build() {
   box = new THREE.Group(); scaler.add(box);
   MAT.acr.color.setHex(TINT[P.tint] || TINT.clear); MAT.acr.opacity = P.tint === 'clear' ? 0.22 : 0.34;
   const d = dims(), hf = hingeFrame();
-  holes3d = []; panelMats = {}; hw3d = [];
+  holes3d = []; panelMats = {}; hw3d = []; probeInfo = { placed: 0, skipped: 0 };
   const mm = (v) => v.clone().multiplyScalar(M);
   const pivotM = mm(hf.pivot);
   movingGroup = new THREE.Group(); movingGroup.position.copy(pivotM); box.add(movingGroup);
@@ -451,7 +486,10 @@ function build() {
     const inv = mat4.clone().invert();
     const holes = [];
     for (const h of holes3d) { const q = h.clone().applyMatrix4(inv); if (q.z > -3 && q.z < d.t + 3 && q.x > 4 && q.x < p.w - 4 && q.y > 4 && q.y < p.h - 4) holes.push({ x: q.x, y: q.y, d: 4.5 }); }
-    p.f.holes = holes; panelMats[p.id] = p;
+    // probe holes that would clash with hinge / handle screw holes are dropped
+    const pr = (p.f.probes || []).filter(c => { const bad = holes.some(hh => Math.hypot(hh.x - c.x, hh.y - c.y) < hh.d / 2 + c.d / 2 + 3); if (bad) p.f.probeSkip = (p.f.probeSkip || 0) + 1; return !bad; });
+    p.f.probes = pr; p.f.holes = holes.concat(pr); panelMats[p.id] = p;
+    probeInfo.placed += pr.length; probeInfo.skipped += p.f.probeSkip || 0;
     const g = panelGeo(p.w, p.h, d.t, p.f);
     const mesh = new THREE.Mesh(g, MAT.acr); mesh.renderOrder = 2;
     const edges = new THREE.LineSegments(new THREE.EdgesGeometry(g, 25), MAT.edge);
@@ -482,6 +520,11 @@ function report() {
   if (Math.max(d.W, d.D, d.H) > 1000 && d.t < 6) warns.push('Panels over 1 m in 3-5 mm acrylic will flex - consider 6 mm or more.');
   if (P.notch && (+P.notchW > 12 || +P.notchH > 12)) warns.push('The cable notch is wider than 12 mm - fill it with a brush strip or grommet so fingers cannot reach in.');
   if (!P.interlock) warns.push('No interlock: the cover can be opened while the machine runs.');
+  if (P.probe) {
+    if (probeInfo.skipped) warns.push(`${probeInfo.skipped} probe hole${probeInfo.skipped > 1 ? 's were left out - they' : ' was left out - it'} would hit an edge, corner post, vent, the notch or a hinge. Move the pattern (Height / Across) or change the spacing.`);
+    if (!probeInfo.placed) warns.push('No probe holes fit on the chosen panel with these settings.');
+    if (+P.probeD >= 12) warns.push(`Probe holes are Ø${P.probeD} mm - a finger (12 mm test finger) can get through. ${P.probeGrommet ? 'Use grommets or brush inserts that close around the probe lead.' : 'Fit grommets or brush inserts, or make the holes smaller.'}`);
+  }
   return { d, pl, area, kg, warns };
 }
 const fmtL = (mm) => units === 'mm' ? Math.round(mm) + '' : (mm / 25.4).toFixed(2);
@@ -497,12 +540,14 @@ function ui() {
   $$('#segOpen button').forEach(b => b.setAttribute('aria-pressed', b.dataset.v === P.open));
   $('#segEdge').innerHTML = edgesFor(P.open).map(([v, l]) => `<button data-v="${v}" aria-pressed="${v === P.edge}">${l}</button>`).join('');
   $$('[data-notch]').forEach(e => e.hidden = !P.notch);
+  $$('[data-probe]').forEach(e => e.hidden = !P.probe);
+  $$('#segProbe button').forEach(b => b.setAttribute('aria-pressed', b.dataset.v === P.probeSide));
   $('#btnStop').textContent = `Stop at ${P.stop}°`;
   $('#btnUnits').textContent = units;
   const R = report();
   $('#chip').textContent = `${fmtL(R.d.W)} × ${fmtL(R.d.D)} × ${fmtL(R.d.H)} ${uL()} · ${R.kg.toFixed(1)} kg`;
   $('#cutTable').innerHTML = `<tr><th>Panel</th><th>W (${uL()})</th><th>H (${uL()})</th><th>Cut-outs</th></tr>` +
-    R.pl.map(p => { const f = (panelMats[p.id] || p).f; return `<tr><td>${p.name}</td><td>${fmtL(p.w)}</td><td>${fmtL(p.h)}</td><td>${(f.holes || []).length}${f.slots && f.slots.length ? ' + ' + f.slots.length + ' slots' : ''}${f.notch ? ' + notch' : ''}</td></tr>`; }).join('') +
+    R.pl.map(p => { const f = (panelMats[p.id] || p).f; return `<tr><td>${p.name}</td><td>${fmtL(p.w)}</td><td>${fmtL(p.h)}</td><td>${(f.holes || []).length - (f.probes || []).length}${f.probes && f.probes.length ? ' + ' + f.probes.length + ' probe' : ''}${f.slots && f.slots.length ? ' + ' + f.slots.length + ' slots' : ''}${f.notch ? ' + notch' : ''}</td></tr>`; }).join('') +
     `<tr><td><b>Acrylic ${R.d.t} mm</b></td><td colspan="2">${R.area.toFixed(2)} m²</td><td>${R.kg.toFixed(1)} kg</td></tr>`;
   const n = +P.hinges, hw = [['Hinge, 40 mm leaf, stainless', n], ['M4 × 12 screw + nyloc nut (hinges)', n * 4]];
   if (P.handle) hw.push(['Pull handle, ~' + Math.round(Math.min(140, hingeFrame().len * 0.45)) + ' mm centres', 1], ['M4 × 16 screw (handle)', 2]);
@@ -510,6 +555,7 @@ function ui() {
   if (P.posts) hw.push(['Corner post 15 × 15 × ' + Math.round(R.d.Hw) + ' mm (PETG)', 4], ['M3 heat-set insert + M3 × 8 screw', 4 * Math.max(2, Math.ceil(R.d.Hw / 150)) * 2]);
   if (P.open === 'lid' && R.d.W * R.d.D / 1e6 * R.d.t * 1.19 > 4) hw.push(['Gas strut / lid stay', 1]);
   if (P.notch) hw.push(['Brush strip for the cable notch', 1]);
+  if (P.probe && P.probeGrommet && probeInfo.placed) hw.push([`Rubber grommet for Ø${P.probeD} mm hole, ${R.d.t} mm panel`, probeInfo.placed]);
   hw.push(['Hinge stop angle', P.stop + '°']);
   $('#hwTable').innerHTML = '<tr><th>Item</th><th>Qty</th></tr>' + hw.map(([a, b]) => `<tr><td>${a}</td><td>${b}</td></tr>`).join('');
   $('#warns').innerHTML = R.warns.map(w => `<div class="warnline">${w}</div>`).join('');
@@ -527,6 +573,7 @@ $$('[data-n]').forEach(el => el.addEventListener('change', () => {
 }));
 $$('[data-sel]').forEach(el => el.addEventListener('change', () => set(el.dataset.sel, +el.value)));
 $$('[data-c]').forEach(el => el.addEventListener('change', () => set(el.dataset.c, el.checked)));
+$('#segProbe').addEventListener('click', e => { const b = e.target.closest('[data-v]'); if (b) set('probeSide', b.dataset.v); });
 $('#segTint').addEventListener('click', e => { const b = e.target.closest('[data-v]'); if (b) set('tint', b.dataset.v); });
 $('#segOpen').addEventListener('click', e => { const b = e.target.closest('[data-v]'); if (!b) return; P.open = b.dataset.v; if (!edgesFor(P.open).some(x => x[0] === P.edge)) P.edge = edgesFor(P.open)[0][0]; angle = 0; build(); });
 $('#segEdge').addEventListener('click', e => { const b = e.target.closest('[data-v]'); if (b) { angle = 0; set('edge', b.dataset.v); } });
